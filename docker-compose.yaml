@@ -1,0 +1,118 @@
+# CRISPR Production Docker Compose
+#
+# Usage:
+#   docker compose up -d
+#
+# Required environment variables (create .env file):
+#   - POSTGRES_PASSWORD: Database password
+#   - CRISPR_ENCRYPTION_KEY: Base64-encoded 32-byte key for secrets
+#   - GITHUB_PAT or GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET: GitHub auth
+#   - ANTHROPIC_API_KEY or OPENAI_API_KEY: LLM provider API key
+#
+# Optional:
+#   - SLACK_CLIENT_ID/SLACK_CLIENT_SECRET: Slack integration
+#   - AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY: S3 storage
+
+services:
+  # ==========================================================================
+  # CRISPR Application
+  # ==========================================================================
+  crispr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: crispr:latest
+    container_name: crispr
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"   # HTTP API + UI
+      - "4317:4317"   # OTLP gRPC
+    environment:
+      CRISPR_CONFIG: /app/config/config.yaml
+      RUST_LOG: "crispr=info,tower_http=info"
+      # Database
+      DATABASE_URL: "postgres://crispr:${POSTGRES_PASSWORD}@postgres:5432/crispr"
+      # Encryption
+      CRISPR__ENCRYPTION_KEY: "${CRISPR_ENCRYPTION_KEY}"
+      # GitHub (choose PAT or OAuth)
+      CRISPR__GITHUB__PERSONAL_ACCESS_TOKEN: "${GITHUB_PAT:-}"
+      CRISPR__GITHUB__CLIENT_ID: "${GITHUB_CLIENT_ID:-}"
+      CRISPR__GITHUB__CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:-}"
+      # LLM API Keys
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      # Slack (optional)
+      CRISPR__SLACK__CLIENT_ID: "${SLACK_CLIENT_ID:-}"
+      CRISPR__SLACK__CLIENT_SECRET: "${SLACK_CLIENT_SECRET:-}"
+      # S3 Storage (optional)
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
+    volumes:
+      - ./config/config.prod.yaml:/app/config/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - crispr-net
+
+  # ==========================================================================
+  # PostgreSQL Database
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: crispr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crispr
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: crispr
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crispr -d crispr"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crispr-net
+
+  # ==========================================================================
+  # MinIO (Optional - for local S3-compatible storage)
+  # ==========================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: crispr-minio
+    restart: unless-stopped
+    profiles:
+      - storage
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minio}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minio123}"
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - crispr-net
+
+volumes:
+  postgres-data:
+  minio-data:
+
+networks:
+  crispr-net:
+    driver: bridge

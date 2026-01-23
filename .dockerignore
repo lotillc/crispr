@@ -1,0 +1,37 @@
+# Dependencies and build artifacts
+target/
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files (don't include secrets in image)
+.env
+.env.*
+!.env.example
+
+# Documentation
+*.md
+!README.md
+
+# Development files
+docker-compose.dev.yaml
+config/config.dev.yaml
+
+# Test files
+tests/
+*.test.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

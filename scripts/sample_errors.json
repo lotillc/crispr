@@ -1,0 +1,53 @@
+[
+  {
+    "project": "test/webapp",
+    "level": "ERROR",
+    "message": "TypeError: Cannot read property 'userId' of undefined",
+    "stack_trace": "TypeError: Cannot read property 'userId' of undefined\n    at UserController.getProfile (/app/src/controllers/user.ts:45:23)\n    at Router.handle (/app/node_modules/express/lib/router/index.js:174:12)",
+    "attributes": {
+      "endpoint": "/api/users/profile",
+      "method": "GET"
+    }
+  },
+  {
+    "project": "test/webapp",
+    "level": "ERROR",
+    "message": "ECONNREFUSED: Connection refused to database",
+    "stack_trace": "Error: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect [as oncomplete] (net.js:1141:16)",
+    "attributes": {
+      "database": "postgres",
+      "host": "localhost"
+    }
+  },
+  {
+    "project": "test/api-service",
+    "level": "FATAL",
+    "message": "OutOfMemoryError: Java heap space",
+    "stack_trace": "java.lang.OutOfMemoryError: Java heap space\n    at java.util.Arrays.copyOf(Arrays.java:3210)\n    at java.util.ArrayList.grow(ArrayList.java:265)",
+    "attributes": {
+      "jvm_heap_max": "512m",
+      "gc_type": "G1"
+    }
+  },
+  {
+    "project": "test/payment-service",
+    "level": "ERROR",
+    "message": "PaymentProcessingException: Card declined - insufficient funds",
+    "stack_trace": "com.example.PaymentProcessingException: Card declined - insufficient funds\n    at com.example.PaymentGateway.charge(PaymentGateway.java:123)\n    at com.example.OrderService.processPayment(OrderService.java:89)",
+    "attributes": {
+      "order_id": "ORD-123456",
+      "amount": 99.99,
+      "currency": "USD"
+    }
+  },
+  {
+    "project": "test/auth-service",
+    "level": "ERROR",
+    "message": "JWTVerificationException: Token has expired",
+    "stack_trace": "io.jsonwebtoken.ExpiredJwtException: JWT expired at 2024-01-15T10:00:00Z\n    at io.jsonwebtoken.impl.DefaultJwtParser.parse(DefaultJwtParser.java:385)",
+    "attributes": {
+      "token_issued_at": "2024-01-14T10:00:00Z",
+      "token_expiry": "2024-01-15T10:00:00Z"
+    }
+  }
+]

@@ -1,0 +1,73 @@
+# CRISPR Production Configuration
+#
+# Most values should be overridden via environment variables:
+#   CRISPR__SECTION__KEY (e.g., CRISPR__DATABASE__URL)
+#
+# Required environment variables:
+#   - DATABASE_URL: PostgreSQL connection string
+#   - CRISPR__ENCRYPTION_KEY: Base64-encoded 32-byte encryption key
+#   - GitHub auth (one of):
+#     - CRISPR__GITHUB__PERSONAL_ACCESS_TOKEN (PAT mode)
+#     - CRISPR__GITHUB__CLIENT_ID + CRISPR__GITHUB__CLIENT_SECRET (OAuth mode)
+#   - LLM API key (one of):
+#     - ANTHROPIC_API_KEY
+#     - OPENAI_API_KEY
+#     - (Ollama requires no key, just base_url)
+
+environment: production
+display_name: "CRISPR"
+
+server:
+  host: "0.0.0.0"
+  http_port: 8080
+  grpc_port: 4317
+
+database:
+  # Override with DATABASE_URL env var
+  url: "postgres://crispr:password@localhost:5432/crispr"
+  max_connections: 20
+
+storage:
+  # Options: "postgres" (simple) or "object_store" (scalable)
+  mode: "postgres"
+  # Uncomment for S3/MinIO/R2 storage:
+  # mode: "object_store"
+  # object_store:
+  #   provider: "s3"  # or "minio", "r2", "azure", "gcp"
+  #   bucket: "crispr-samples"
+  #   region: "us-east-1"
+  #   # endpoint: "http://minio:9000"  # for MinIO
+
+github:
+  # Options: "pat" or "oauth"
+  mode: "pat"
+  # Set via CRISPR__GITHUB__PERSONAL_ACCESS_TOKEN
+  personal_access_token: null
+  # For OAuth mode:
+  client_id: null
+  client_secret: null
+
+slack:
+  enabled: false
+  # Set via CRISPR__SLACK__CLIENT_ID and CRISPR__SLACK__CLIENT_SECRET
+  client_id: null
+  client_secret: null
+
+# LLM configuration is stored in database, not config file
+# Configure via UI or API after startup
+
+safety:
+  # In production, you may want to remove this restriction
+  # or specify exactly which repos CRISPR can modify
+  allowed_repos: null
+  dry_run: false
+  pr_branch_prefix: "crispr/"
+
+pipeline:
+  cooldown_hours: 4
+  max_fix_attempts: 3
+  auto_approve: false
+
+logging:
+  level: "info"
+  format: "json"

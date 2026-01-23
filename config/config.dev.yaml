@@ -1,0 +1,55 @@
+environment: development
+display_name: "CRISPR (local dev)"
+
+server:
+  host: "127.0.0.1"
+  http_port: 8081
+  grpc_port: 4318
+
+database:
+  url: "postgres://crispr:crispr@localhost:5433/crispr_dev"
+  max_connections: 5
+
+storage:
+  mode: postgres  # samples stored in postgres
+
+github:
+  mode: pat
+  personal_access_token: ${GITHUB_PAT}
+
+slack:
+  enabled: false
+
+# llm:
+#   reader:
+#     provider: anthropic
+#     api_key: ${ANTHROPIC_API_KEY}
+#     model: claude-3-haiku-20240307
+#   writer:
+#     provider: anthropic
+#     api_key: ${ANTHROPIC_API_KEY}
+#     model: claude-sonnet-4-20250514
+
+safety:
+  allowed_repos:
+    - "test/*"
+    - "acme/*"
+    - "youruser/test-repo"
+    - "youruser/*-sandbox"
+  dry_run: true
+  pr_branch_prefix: "crispr-dev/"
+
+pipeline:
+  cooldown_hours: 24
+  max_fix_attempts: 3
+  auto_approve: false
+  repos_dir: "./repos"  # where to clone repos locally
+
+worker:
+  # id is auto-generated from hostname + pid if not set
+  claim_timeout_minutes: 15
+  heartbeat_interval_seconds: 30
+
+logging:
+  level: debug
+  format: pretty

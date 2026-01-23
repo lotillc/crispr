@@ -1,0 +1,41 @@
+# Build artifacts
+/target/
+debug/
+release/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# UI build output
+/ui/build/
+/ui/node_modules/
+/ui/.svelte-kit/
+
+# Database
+*.db
+*.sqlite
+
+# Secrets (never commit!)
+*.pem
+*.key
+secrets/
+
+# Local repository clones
+/repos/
