@@ -278,6 +278,148 @@ export function getMockIncidentsWithProjects(): Incident[] {
 	}));
 }
 
+// Mock samples for incidents
+export const mockSamples: Record<string, Array<{ id: string; incident_id: string; timestamp: string; raw_log: string; stack_trace?: string; metadata?: Record<string, any> }>> = {
+	'inc-1': [
+		{
+			id: 'sample-1a',
+			incident_id: 'inc-1',
+			timestamp: '2024-01-22T14:30:00Z',
+			raw_log: "TypeError: Cannot read property 'userId' of undefined",
+			stack_trace: `TypeError: Cannot read property 'userId' of undefined
+    at processRefund (/app/src/handlers/payment.ts:42:15)
+    at async Router.handle (/app/node_modules/express/lib/router/index.js:174:5)
+    at async Layer.handle (/app/node_modules/express/lib/router/layer.js:95:5)
+    at async /app/src/middleware/auth.ts:28:9`,
+			metadata: { request_id: 'req-abc123', user_agent: 'Mozilla/5.0' }
+		}
+	],
+	'inc-2': [
+		{
+			id: 'sample-2a',
+			incident_id: 'inc-2',
+			timestamp: '2024-01-22T13:00:00Z',
+			raw_log: 'ValidationError: Amount must be a positive number',
+			stack_trace: `ValidationError: Amount must be a positive number
+    at validateAmount (/app/src/validators/amount.ts:15:11)
+    at processPayment (/app/src/handlers/payment.ts:28:3)
+    at async Router.handle (/app/node_modules/express/lib/router/index.js:174:5)`,
+			metadata: { amount: '-50.00', currency: 'USD' }
+		}
+	],
+	'inc-3': [
+		{
+			id: 'sample-3a',
+			incident_id: 'inc-3',
+			timestamp: '2024-01-19T15:30:00Z',
+			raw_log: 'ReferenceError: getProfile is not defined',
+			stack_trace: `ReferenceError: getProfile is not defined
+    at UserController.show (/app/src/controllers/user.ts:55:12)
+    at async Router.handle (/app/node_modules/express/lib/router/index.js:174:5)`
+		}
+	],
+	'inc-4': [
+		{
+			id: 'sample-4a',
+			incident_id: 'inc-4',
+			timestamp: '2024-01-22T12:15:00Z',
+			raw_log: 'IndexError: list index out of range',
+			stack_trace: `IndexError: list index out of range
+    at getFirstItem (/app/src/utils/array.ts:12:9)
+    at processResults (/app/src/handlers/search.ts:45:18)`
+		}
+	],
+	'inc-5': [
+		{
+			id: 'sample-5a',
+			incident_id: 'inc-5',
+			timestamp: '2024-01-22T10:00:00Z',
+			raw_log: 'TimeoutError: Database connection timed out after 30000ms',
+			stack_trace: `TimeoutError: Database connection timed out after 30000ms
+    at Pool.connect (/app/node_modules/pg/lib/pool.js:85:11)
+    at async DatabaseClient.query (/app/src/db/client.ts:42:5)`
+		}
+	],
+	'inc-6': [
+		{
+			id: 'sample-6a',
+			incident_id: 'inc-6',
+			timestamp: '2024-01-21T18:45:00Z',
+			raw_log: 'SMTPError: Connection refused to mail server at smtp.example.com:587',
+			stack_trace: `SMTPError: Connection refused to mail server at smtp.example.com:587
+    at SMTPClient.connect (/app/src/email/smtp.ts:34:9)
+    at async sendNotification (/app/src/services/notification.ts:67:5)`
+		}
+	],
+	'inc-8': [
+		{
+			id: 'sample-8a',
+			incident_id: 'inc-8',
+			timestamp: '2024-01-22T11:00:00Z',
+			raw_log: "SyntaxError: Unexpected token '<' in JSON at position 0",
+			stack_trace: `SyntaxError: Unexpected token '<' in JSON at position 0
+    at JSON.parse (<anonymous>)
+    at ApiClient.parseResponse (/app/src/api/client.ts:89:22)
+    at async ApiClient.fetch (/app/src/api/client.ts:45:12)`,
+			metadata: { endpoint: '/api/users', status: 502 }
+		}
+	]
+};
+
+// Mock activity logs for incidents
+export const mockActivityLogs: Record<string, Array<{ id: string; incident_id: string; action: string; details?: string; created_at: string }>> = {
+	'inc-1': [
+		{ id: 'act-1a', incident_id: 'inc-1', action: 'Incident detected', details: 'First occurrence captured', created_at: '2024-01-20T10:00:00Z' },
+		{ id: 'act-1b', incident_id: 'inc-1', action: 'Triage started', created_at: '2024-01-20T10:01:00Z' },
+		{ id: 'act-1c', incident_id: 'inc-1', action: 'Triage complete', details: 'Fixable with 92% confidence', created_at: '2024-01-20T10:02:30Z' },
+		{ id: 'act-1d', incident_id: 'inc-1', action: 'Fix generation started', created_at: '2024-01-20T10:03:00Z' },
+		{ id: 'act-1e', incident_id: 'inc-1', action: 'Fix generated', details: 'Added null check for req.user', created_at: '2024-01-20T10:05:45Z' },
+		{ id: 'act-1f', incident_id: 'inc-1', action: 'PR created', details: 'PR #142 opened on acme/payments-api', created_at: '2024-01-20T10:06:00Z' }
+	],
+	'inc-2': [
+		{ id: 'act-2a', incident_id: 'inc-2', action: 'Incident detected', created_at: '2024-01-21T08:00:00Z' },
+		{ id: 'act-2b', incident_id: 'inc-2', action: 'Triage started', created_at: '2024-01-21T08:01:00Z' },
+		{ id: 'act-2c', incident_id: 'inc-2', action: 'Triage complete', details: 'Fixable with 88% confidence', created_at: '2024-01-21T08:02:15Z' },
+		{ id: 'act-2d', incident_id: 'inc-2', action: 'Fix generation started', created_at: '2024-01-22T13:00:00Z' }
+	],
+	'inc-3': [
+		{ id: 'act-3a', incident_id: 'inc-3', action: 'Incident detected', created_at: '2024-01-19T15:00:00Z' },
+		{ id: 'act-3b', incident_id: 'inc-3', action: 'Triage complete', details: 'Missing import - high confidence fix', created_at: '2024-01-19T15:01:30Z' },
+		{ id: 'act-3c', incident_id: 'inc-3', action: 'PR created', details: 'PR #89 opened', created_at: '2024-01-19T15:03:00Z' },
+		{ id: 'act-3d', incident_id: 'inc-3', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-19T16:30:00Z' }
+	],
+	'inc-4': [
+		{ id: 'act-4a', incident_id: 'inc-4', action: 'Incident detected', created_at: '2024-01-22T11:00:00Z' },
+		{ id: 'act-4b', incident_id: 'inc-4', action: 'Triage started', created_at: '2024-01-22T12:00:00Z' }
+	],
+	'inc-5': [
+		{ id: 'act-5a', incident_id: 'inc-5', action: 'Incident detected', created_at: '2024-01-18T09:00:00Z' },
+		{ id: 'act-5b', incident_id: 'inc-5', action: 'Triage complete', details: 'Infrastructure issue - not fixable via code', created_at: '2024-01-18T09:02:00Z' },
+		{ id: 'act-5c', incident_id: 'inc-5', action: 'Marked as unfixable', details: 'Requires infrastructure team intervention', created_at: '2024-01-18T09:02:30Z' }
+	],
+	'inc-6': [
+		{ id: 'act-6a', incident_id: 'inc-6', action: 'Incident detected', details: 'Awaiting triage', created_at: '2024-01-21T14:00:00Z' }
+	],
+	'inc-8': [
+		{ id: 'act-8a', incident_id: 'inc-8', action: 'Incident detected', created_at: '2024-01-22T09:00:00Z' },
+		{ id: 'act-8b', incident_id: 'inc-8', action: 'Triage complete', details: 'JSON parse error - fixable', created_at: '2024-01-22T09:01:45Z' },
+		{ id: 'act-8c', incident_id: 'inc-8', action: 'PR created', details: 'PR #91 opened', created_at: '2024-01-22T09:05:00Z' }
+	]
+};
+
+// Get mock incident with full details (samples + activity)
+export function getMockIncidentDetails(id: string) {
+	const incident = mockIncidents.find(i => i.id === id);
+	if (!incident) return null;
+
+	return {
+		...incident,
+		project: mockProjects.find(p => p.id === incident.project_id),
+		samples: mockSamples[id] || [],
+		activity: mockActivityLogs[id] || []
+	};
+}
+
 // Usage details for charts
 export const mockUsageDetails = [
 	{ date: '2024-01-16', provider: 'anthropic', model: 'claude-3-haiku', purpose: 'triage', requests: 45, input_tokens: 89000, output_tokens: 12000, cost: 0.89 },

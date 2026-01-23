@@ -27,7 +27,7 @@
 	async function selectIncident(incident: Incident) {
 		loadingIncident = true;
 		try {
-			selectedIncident = await api.getIncident(incident.id);
+			selectedIncident = await incidents.get(incident.id);
 		} catch (e) {
 			console.error('Failed to load incident:', e);
 		} finally {
@@ -40,7 +40,7 @@
 		actionLoading = true;
 		try {
 			await incidents.retry(selectedIncident.id);
-			selectedIncident = await api.getIncident(selectedIncident.id);
+			selectedIncident = await incidents.get(selectedIncident.id);
 		} finally {
 			actionLoading = false;
 		}
@@ -51,7 +51,7 @@
 		actionLoading = true;
 		try {
 			await incidents.ignore(selectedIncident.id);
-			selectedIncident = await api.getIncident(selectedIncident.id);
+			selectedIncident = await incidents.get(selectedIncident.id);
 		} finally {
 			actionLoading = false;
 		}

@@ -8,7 +8,8 @@ import {
 	mockUsageSummary,
 	mockIncidentStats,
 	mockUsageDetails,
-	getMockIncidentsWithProjects
+	getMockIncidentsWithProjects,
+	getMockIncidentDetails
 } from '$lib/mockData';
 
 // Refresh intervals
@@ -178,6 +179,16 @@ function createIncidentsStore() {
 					i.id === id ? { ...i, status: 'ignored' as const } : i
 				)
 			);
+		},
+		async get(id: string) {
+			if (get(demoMode)) {
+				const details = getMockIncidentDetails(id);
+				if (!details) {
+					throw new Error('Incident not found');
+				}
+				return details;
+			}
+			return api.getIncident(id);
 		},
 		startRefresh(params?: { project_id?: string; status?: string }) {
 			this.load(params);

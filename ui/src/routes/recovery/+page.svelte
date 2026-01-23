@@ -1,26 +1,21 @@
 <script lang="ts">
-	import { pendingPRs, projects, demoMode } from '$lib/stores';
-	import * as api from '$lib/api';
+	import { pendingPRs, projects, incidents } from '$lib/stores';
 	import type { Incident } from '$lib/api';
 
 	let selectedPR = $state<Incident | null>(null);
 	let loadingDetails = $state(false);
 
-	// In demo mode, we use the incident directly since we have all the data
-	// In live mode, we'd fetch full details from the API
+	// Fetch full incident details (works in both demo and live mode via store)
 	async function selectPR(incident: Incident) {
-		selectedPR = incident;
-		if (!$demoMode) {
-			loadingDetails = true;
-			try {
-				const fullIncident = await api.getIncident(incident.id);
-				// Merge the full incident data
-				selectedPR = { ...incident, ...fullIncident };
-			} catch (e) {
-				console.error('Failed to load incident:', e);
-			} finally {
-				loadingDetails = false;
-			}
+		loadingDetails = true;
+		try {
+			const fullIncident = await incidents.get(incident.id);
+			selectedPR = { ...incident, ...fullIncident };
+		} catch (e) {
+			console.error('Failed to load incident:', e);
+			selectedPR = incident; // fallback to basic incident data
+		} finally {
+			loadingDetails = false;
 		}
 	}
 
