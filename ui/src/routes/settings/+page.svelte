@@ -186,13 +186,17 @@
 					<p>Required for reading code and creating pull requests</p>
 				</div>
 				<div class="connection-status">
-					{#if $auth?.github?.connected}
+					{#if $auth?.github?.connected && $auth.github.user}
 						<span class="status-badge connected">
 							<svg viewBox="0 0 20 20" fill="currentColor">
 								<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
 							</svg>
-							Connected as {$auth.github.user?.login}
+							Connected as {$auth.github.user.login}
 						</span>
+					{:else if $auth?.github?.oauth_url}
+						<a href={$auth.github.oauth_url} class="btn btn-primary">
+							Connect GitHub
+						</a>
 					{:else}
 						<a href={api.getGithubAuthUrl()} class="btn btn-primary">
 							Connect GitHub
@@ -221,12 +225,12 @@
 								</svg>
 								{$auth.slack.team_name}
 							</span>
-						{:else if $auth?.slack?.enabled}
+						{:else if $auth?.slack?.enabled === false}
+							<span class="status-badge disabled">Not Enabled</span>
+						{:else}
 							<a href={api.getSlackAuthUrl()} class="btn btn-secondary">
 								Connect Slack
 							</a>
-						{:else}
-							<span class="status-badge disabled">Not Enabled</span>
 						{/if}
 					</div>
 				</div>
