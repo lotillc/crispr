@@ -159,6 +159,8 @@ pub struct WebhooksConfig {
     pub sentry_secret: Option<String>,
     /// Token for verifying Datadog webhook requests
     pub datadog_token: Option<String>,
+    /// Token for verifying Grafana webhook requests
+    pub grafana_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

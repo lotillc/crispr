@@ -3,6 +3,7 @@
 //! Supports ingestion from:
 //! - Sentry: Issue and error event webhooks
 //! - Datadog: Event and error webhooks
+//! - Grafana: Alert notifications from Grafana Alerting
 
 use axum::{
     body::Bytes,
@@ -764,6 +765,331 @@ fn extract_project_from_datadog_tags(tags: Option<&Vec<String>>) -> Option<Strin
     })
 }
 
+// ============================================================================
+// Grafana Webhook Types
+// ============================================================================
+
+/// Grafana alert notification payload (Grafana Alerting / Unified Alerting)
+#[derive(Debug, Deserialize)]
+pub struct GrafanaWebhookPayload {
+    /// Alert receiver name
+    pub receiver: Option<String>,
+    /// Status: "firing" or "resolved"
+    pub status: Option<String>,
+    /// List of alerts
+    pub alerts: Vec<GrafanaAlert>,
+    /// Group labels
+    #[serde(rename = "groupLabels")]
+    pub group_labels: Option<serde_json::Value>,
+    /// Common labels shared by all alerts
+    #[serde(rename = "commonLabels")]
+    pub common_labels: Option<serde_json::Value>,
+    /// Common annotations shared by all alerts
+    #[serde(rename = "commonAnnotations")]
+    pub common_annotations: Option<GrafanaAnnotations>,
+    /// External URL to Grafana
+    #[serde(rename = "externalURL")]
+    pub external_url: Option<String>,
+    /// Version of the webhook payload
+    pub version: Option<String>,
+    /// Group key for deduplication
+    #[serde(rename = "groupKey")]
+    pub group_key: Option<String>,
+    /// Truncated alerts count
+    #[serde(rename = "truncatedAlerts")]
+    pub truncated_alerts: Option<i32>,
+    /// Organization ID
+    #[serde(rename = "orgId")]
+    pub org_id: Option<i64>,
+    /// Title (legacy format)
+    pub title: Option<String>,
+    /// State (legacy format)
+    pub state: Option<String>,
+    /// Message (legacy format)
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GrafanaAlert {
+    /// Status: "firing" or "resolved"
+    pub status: Option<String>,
+    /// Alert labels (includes alertname, severity, etc.)
+    pub labels: Option<serde_json::Value>,
+    /// Alert annotations (includes summary, description, etc.)
+    pub annotations: Option<GrafanaAnnotations>,
+    /// Start time of the alert
+    #[serde(rename = "startsAt")]
+    pub starts_at: Option<String>,
+    /// End time of the alert (for resolved)
+    #[serde(rename = "endsAt")]
+    pub ends_at: Option<String>,
+    /// URL to the alert in Grafana
+    #[serde(rename = "generatorURL")]
+    pub generator_url: Option<String>,
+    /// Silence URL
+    #[serde(rename = "silenceURL")]
+    pub silence_url: Option<String>,
+    /// Dashboard URL
+    #[serde(rename = "dashboardURL")]
+    pub dashboard_url: Option<String>,
+    /// Panel URL
+    #[serde(rename = "panelURL")]
+    pub panel_url: Option<String>,
+    /// Fingerprint for deduplication
+    pub fingerprint: Option<String>,
+    /// Values that triggered the alert
+    pub values: Option<serde_json::Value>,
+    /// Value string representation
+    #[serde(rename = "valueString")]
+    pub value_string: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GrafanaAnnotations {
+    /// Alert summary
+    pub summary: Option<String>,
+    /// Alert description
+    pub description: Option<String>,
+    /// Runbook URL
+    pub runbook_url: Option<String>,
+}
+
+// ============================================================================
+// Grafana Webhook Handler
+// ============================================================================
+
+/// POST /webhooks/grafana
+///
+/// Accepts Grafana alert notification webhooks and converts them to CRISPR incidents.
+/// Supports both legacy Grafana alerting and unified alerting formats.
+pub async fn grafana_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<GrafanaWebhookPayload>,
+) -> Result<Json<WebhookResponse>, AppError> {
+    info!(
+        status = ?payload.status,
+        alerts_count = payload.alerts.len(),
+        "Received Grafana webhook"
+    );
+
+    // Verify webhook token if configured
+    if let Some(expected_token) = &state.config.webhooks.as_ref().and_then(|w| w.grafana_token.as_ref()) {
+        // Check Authorization header (Bearer token)
+        let auth_valid = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(|auth| {
+                auth.strip_prefix("Bearer ")
+                    .map(|token| token == expected_token.as_str())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        // Also check X-Grafana-Token header as fallback
+        let token_valid = headers
+            .get("x-grafana-token")
+            .and_then(|v| v.to_str().ok())
+            .map(|token| token == expected_token.as_str())
+            .unwrap_or(false);
+
+        if !auth_valid && !token_valid {
+            warn!("Invalid or missing Grafana webhook token");
+            return Err(AppError::Unauthorized("Invalid webhook token".into()));
+        }
+    }
+
+    let mut incidents_created = 0;
+    let mut incidents_updated = 0;
+
+    // Process each alert
+    for alert in &payload.alerts {
+        // Only process firing alerts (not resolved)
+        let status = alert.status.as_deref().unwrap_or("firing");
+        if status != "firing" {
+            continue;
+        }
+
+        // Check severity - only process error/critical/warning
+        let severity = alert.labels.as_ref()
+            .and_then(|l| l.get("severity"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("error");
+
+        if !matches!(severity, "error" | "critical" | "warning" | "high") {
+            continue;
+        }
+
+        if let Some(ingest_payload) = grafana_alert_to_ingest(alert, &payload)? {
+            let response = super::ingest::http_ingest(
+                State(state.clone()),
+                Json(ingest_payload),
+            )
+            .await?;
+
+            if response.accepted {
+                if response.is_new.unwrap_or(false) {
+                    incidents_created += 1;
+                } else {
+                    incidents_updated += 1;
+                }
+            }
+        }
+    }
+
+    // Record metrics
+    metrics::record_ingest();
+
+    Ok(Json(WebhookResponse {
+        accepted: true,
+        message: format!(
+            "Processed Grafana webhook: {} created, {} updated",
+            incidents_created, incidents_updated
+        ),
+        incidents_created,
+        incidents_updated,
+    }))
+}
+
+/// Convert a Grafana alert to CRISPR IngestPayload
+fn grafana_alert_to_ingest(
+    alert: &GrafanaAlert,
+    parent: &GrafanaWebhookPayload,
+) -> Result<Option<IngestPayload>, AppError> {
+    // Get alert name from labels
+    let alertname = alert.labels.as_ref()
+        .and_then(|l| l.get("alertname"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown Alert");
+
+    // Get message from annotations (summary > description) or alert name
+    let message = alert.annotations.as_ref()
+        .and_then(|a| a.summary.clone().or_else(|| a.description.clone()))
+        .or_else(|| parent.common_annotations.as_ref()
+            .and_then(|a| a.summary.clone().or_else(|| a.description.clone())))
+        .or_else(|| parent.message.clone())
+        .unwrap_or_else(|| alertname.to_string());
+
+    // Extract project from labels
+    let project = extract_project_from_grafana_labels(alert.labels.as_ref())
+        .or_else(|| extract_project_from_grafana_labels(parent.common_labels.as_ref()));
+
+    // Parse timestamp
+    let timestamp = alert.starts_at.as_ref().and_then(|ts| {
+        DateTime::parse_from_rfc3339(ts).ok().map(|dt| dt.with_timezone(&Utc))
+    });
+
+    // Determine level from severity label
+    let level = alert.labels.as_ref()
+        .and_then(|l| l.get("severity"))
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "critical" | "high" => "CRITICAL",
+            "error" => "ERROR",
+            "warning" | "warn" => "WARNING",
+            _ => "ERROR",
+        })
+        .unwrap_or("ERROR")
+        .to_string();
+
+    // Build attributes
+    let mut attributes = serde_json::Map::new();
+    attributes.insert("grafana_alertname".to_string(), serde_json::json!(alertname));
+
+    if let Some(fingerprint) = &alert.fingerprint {
+        attributes.insert("grafana_fingerprint".to_string(), serde_json::json!(fingerprint));
+    }
+    if let Some(url) = &alert.generator_url {
+        attributes.insert("grafana_url".to_string(), serde_json::json!(url));
+    }
+    if let Some(url) = &alert.dashboard_url {
+        attributes.insert("grafana_dashboard_url".to_string(), serde_json::json!(url));
+    }
+    if let Some(url) = &alert.panel_url {
+        attributes.insert("grafana_panel_url".to_string(), serde_json::json!(url));
+    }
+    if let Some(values) = &alert.values {
+        attributes.insert("grafana_values".to_string(), values.clone());
+    }
+    if let Some(value_string) = &alert.value_string {
+        attributes.insert("grafana_value_string".to_string(), serde_json::json!(value_string));
+    }
+    if let Some(labels) = &alert.labels {
+        attributes.insert("grafana_labels".to_string(), labels.clone());
+    }
+    if let Some(receiver) = &parent.receiver {
+        attributes.insert("grafana_receiver".to_string(), serde_json::json!(receiver));
+    }
+
+    // Use value_string as additional context in the message if available
+    let full_message = if let Some(value_string) = &alert.value_string {
+        format!("{}\n\nValues: {}", message, value_string)
+    } else {
+        message
+    };
+
+    // Get service name from labels
+    let service_name = alert.labels.as_ref()
+        .and_then(|l| l.get("service").or_else(|| l.get("job")).or_else(|| l.get("instance")))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    Ok(Some(IngestPayload {
+        project,
+        service_name,
+        kubernetes_namespace: alert.labels.as_ref()
+            .and_then(|l| l.get("namespace"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        kubernetes_pod: alert.labels.as_ref()
+            .and_then(|l| l.get("pod"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        level,
+        message: full_message,
+        stack_trace: None, // Grafana alerts typically don't include stack traces
+        timestamp,
+        attributes: Some(serde_json::Value::Object(attributes)),
+    }))
+}
+
+/// Extract project identifier from Grafana labels
+/// Looks for labels like "project", "repo", "repository", or "service"
+fn extract_project_from_grafana_labels(labels: Option<&serde_json::Value>) -> Option<String> {
+    labels.and_then(|l| {
+        // Check explicit project labels first
+        if let Some(project) = l.get("project").and_then(|v| v.as_str()) {
+            return Some(project.to_string());
+        }
+        if let Some(repo) = l.get("repo").and_then(|v| v.as_str()) {
+            return Some(repo.to_string());
+        }
+        if let Some(repo) = l.get("repository").and_then(|v| v.as_str()) {
+            return Some(repo.to_string());
+        }
+        // Try to construct from namespace/service
+        if let (Some(namespace), Some(service)) = (
+            l.get("namespace").and_then(|v| v.as_str()),
+            l.get("service").and_then(|v| v.as_str())
+        ) {
+            return Some(format!("{}/{}", namespace, service));
+        }
+        // Fall back to service with hyphen conversion
+        if let Some(service) = l.get("service").and_then(|v| v.as_str()) {
+            if service.contains('/') {
+                return Some(service.to_string());
+            }
+            if service.contains('-') {
+                if let Some(idx) = service.find('-') {
+                    let (owner, repo) = service.split_at(idx);
+                    return Some(format!("{}/{}", owner, &repo[1..]));
+                }
+            }
+        }
+        None
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -921,5 +1247,103 @@ mod tests {
 
         // Verify with tampered body should fail
         assert!(!verify_sentry_signature(tampered_body, &signature, secret));
+    }
+
+    #[test]
+    fn test_extract_project_from_grafana_labels() {
+        // Explicit project label
+        let labels = serde_json::json!({
+            "project": "acme/webapp",
+            "severity": "error"
+        });
+        assert_eq!(
+            extract_project_from_grafana_labels(Some(&labels)),
+            Some("acme/webapp".to_string())
+        );
+
+        // Namespace + service
+        let labels2 = serde_json::json!({
+            "namespace": "production",
+            "service": "api-gateway",
+            "severity": "critical"
+        });
+        assert_eq!(
+            extract_project_from_grafana_labels(Some(&labels2)),
+            Some("production/api-gateway".to_string())
+        );
+
+        // Service with hyphen conversion
+        let labels3 = serde_json::json!({
+            "service": "acme-webapp",
+            "severity": "error"
+        });
+        assert_eq!(
+            extract_project_from_grafana_labels(Some(&labels3)),
+            Some("acme/webapp".to_string())
+        );
+
+        // No project info
+        let labels4 = serde_json::json!({
+            "severity": "error",
+            "alertname": "HighErrorRate"
+        });
+        assert_eq!(extract_project_from_grafana_labels(Some(&labels4)), None);
+
+        assert_eq!(extract_project_from_grafana_labels(None), None);
+    }
+
+    #[test]
+    fn test_grafana_alert_to_ingest() {
+        let alert = GrafanaAlert {
+            status: Some("firing".to_string()),
+            labels: Some(serde_json::json!({
+                "alertname": "HighErrorRate",
+                "severity": "critical",
+                "service": "api-gateway",
+                "namespace": "production"
+            })),
+            annotations: Some(GrafanaAnnotations {
+                summary: Some("Error rate exceeded threshold".to_string()),
+                description: Some("The API gateway error rate is above 5%".to_string()),
+                runbook_url: None,
+            }),
+            starts_at: Some("2024-01-15T10:00:00Z".to_string()),
+            ends_at: None,
+            generator_url: Some("https://grafana.example.com/alerting/1".to_string()),
+            silence_url: None,
+            dashboard_url: Some("https://grafana.example.com/d/abc123".to_string()),
+            panel_url: None,
+            fingerprint: Some("abc123def456".to_string()),
+            values: Some(serde_json::json!({"error_rate": 0.08})),
+            value_string: Some("error_rate = 8%".to_string()),
+        };
+
+        let parent = GrafanaWebhookPayload {
+            receiver: Some("crispr".to_string()),
+            status: Some("firing".to_string()),
+            alerts: vec![],
+            group_labels: None,
+            common_labels: None,
+            common_annotations: None,
+            external_url: None,
+            version: None,
+            group_key: None,
+            truncated_alerts: None,
+            org_id: None,
+            title: None,
+            state: None,
+            message: None,
+        };
+
+        let ingest = grafana_alert_to_ingest(&alert, &parent).unwrap().unwrap();
+        assert_eq!(ingest.level, "CRITICAL");
+        assert!(ingest.message.contains("Error rate exceeded threshold"));
+        assert!(ingest.message.contains("error_rate = 8%"));
+        assert_eq!(ingest.project, Some("production/api-gateway".to_string()));
+        assert!(ingest.attributes.is_some());
+
+        let attrs = ingest.attributes.unwrap();
+        assert_eq!(attrs.get("grafana_alertname").unwrap(), "HighErrorRate");
+        assert_eq!(attrs.get("grafana_fingerprint").unwrap(), "abc123def456");
     }
 }

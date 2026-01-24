@@ -32,6 +32,7 @@ pub fn build(state: AppState) -> Router {
     let webhook_routes = Router::new()
         .route("/webhooks/sentry", post(webhooks::sentry_webhook))
         .route("/webhooks/datadog", post(webhooks::datadog_webhook))
+        .route("/webhooks/grafana", post(webhooks::grafana_webhook))
         .layer(rate_limit::RateLimitLayer::new(ingest_limiter))
         .with_state(state.clone());
 

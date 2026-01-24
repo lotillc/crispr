@@ -334,8 +334,27 @@ CRISPR verifies Sentry webhook signatures using HMAC-SHA256 when a secret is con
 
 1. In Datadog, go to **Integrations → Webhooks**
 2. Create a new webhook with URL: `http://your-crispr-server:8081/webhooks/datadog`
-3. Add a `crispr_token` tag to identify the project
+3. Add a `project:owner/repo` tag to identify the project
 4. Configure monitors to send to this webhook on error/alert
+
+#### Grafana
+
+1. In Grafana, go to **Alerting → Contact Points**
+2. Create a new contact point with type **Webhook**
+3. Set URL: `http://your-crispr-server:8081/webhooks/grafana`
+4. (Optional) Add authentication header: `Authorization: Bearer your-token`
+5. Configure in CRISPR:
+   ```yaml
+   webhooks:
+     grafana_token: "your-token"
+   ```
+
+Add labels to your alert rules for project identification:
+- `project: owner/repo` - Explicit project mapping
+- `namespace` + `service` - Combined as namespace/service
+- `service: owner-repo` - Hyphen converted to slash
+
+CRISPR processes alerts with severity `error`, `critical`, `warning`, or `high`.
 
 ---
 

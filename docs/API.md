@@ -26,6 +26,7 @@ This document provides comprehensive documentation for the CRISPR REST API.
 - [Webhook Integration Guides](#webhook-integration-guides)
   - [Sentry Integration](#sentry-integration)
   - [Datadog Integration](#datadog-integration)
+  - [Grafana Integration](#grafana-integration)
 
 ---
 
@@ -37,14 +38,17 @@ CRISPR currently operates as a self-hosted internal service and does not require
 
 1. **Network Security**: Deploy CRISPR behind a firewall or VPN
 2. **Reverse Proxy**: Use nginx/traefik with authentication for external access
-3. **Webhook Secrets**: Configure `sentry_secret` and `datadog_token` in your config for webhook signature verification
+3. **Webhook Secrets**: Configure webhook secrets in your config for signature verification
 
 ### Webhook Authentication
 
-Webhooks support optional signature verification:
+Webhooks support optional signature/token verification:
 
-**Sentry**: Uses `Sentry-Hook-Signature` header with HMAC-SHA256
-**Datadog**: Uses `X-Datadog-Token` header with a shared token
+| Provider | Header | Verification Method |
+|----------|--------|---------------------|
+| **Sentry** | `Sentry-Hook-Signature` | HMAC-SHA256 signature |
+| **Datadog** | `X-Datadog-Token` | Shared token |
+| **Grafana** | `Authorization: Bearer <token>` or `X-Grafana-Token` | Bearer token |
 
 Configure in `config.yaml`:
 
@@ -52,6 +56,7 @@ Configure in `config.yaml`:
 webhooks:
   sentry_secret: "your-sentry-webhook-secret"
   datadog_token: "your-datadog-webhook-token"
+  grafana_token: "your-grafana-webhook-token"
 ```
 
 ---
@@ -1164,6 +1169,65 @@ Datadog webhook payload. See [Datadog Integration](#datadog-integration) for det
 
 ---
 
+#### POST /webhooks/grafana
+
+Receive alert notifications from Grafana Alerting (Unified Alerting).
+
+**Headers**
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Content-Type` | Yes | `application/json` |
+| `Authorization` | No | `Bearer <token>` (if configured) |
+| `X-Grafana-Token` | No | Alternative token header |
+
+**Request Body**
+
+Grafana unified alerting webhook payload. See [Grafana Integration](#grafana-integration) for details.
+
+**Example Payload**
+```json
+{
+  "receiver": "crispr",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "severity": "critical",
+        "service": "api-gateway",
+        "namespace": "production"
+      },
+      "annotations": {
+        "summary": "Error rate exceeded 5% threshold",
+        "description": "The API gateway is experiencing elevated error rates"
+      },
+      "startsAt": "2024-01-15T10:00:00Z",
+      "generatorURL": "https://grafana.example.com/alerting/1",
+      "fingerprint": "abc123",
+      "values": {"error_rate": 0.08},
+      "valueString": "error_rate = 8%"
+    }
+  ],
+  "commonLabels": {
+    "team": "platform"
+  }
+}
+```
+
+**Response**
+```json
+{
+  "accepted": true,
+  "message": "Processed Grafana webhook: 1 created, 0 updated",
+  "incidents_created": 1,
+  "incidents_updated": 0
+}
+```
+
+---
+
 ### Ingest
 
 #### POST /ingest
@@ -1459,6 +1523,119 @@ CRISPR can receive error events from Datadog monitors and log-based alerts.
 | `warning` | Only if priority is `critical` |
 | `info` | No |
 | `success` | No |
+
+---
+
+### Grafana Integration
+
+CRISPR can receive alert notifications from Grafana Alerting (Unified Alerting).
+
+#### Setup Steps
+
+1. **Create a Contact Point in Grafana**
+   - Go to **Alerting > Contact Points**
+   - Click **Add contact point**
+   - Configure:
+     - **Name**: CRISPR
+     - **Integration**: Webhook
+     - **URL**: `https://your-crispr-host/webhooks/grafana`
+     - **HTTP Method**: POST
+     - (Optional) **Authorization Header**: `Bearer your-secret-token`
+
+2. **Configure CRISPR**
+   ```yaml
+   webhooks:
+     grafana_token: "your-secret-token"
+   ```
+
+3. **Add Labels to Your Alert Rules**
+
+   CRISPR uses Grafana labels to identify the GitHub repository. Add one of these labels to your alert rules:
+   - `project: owner/repo` - Explicit project mapping
+   - `repo: owner/repo` - Alternative format
+   - `repository: owner/repo` - Another alternative
+   - `namespace` + `service` - Combined as `namespace/service`
+   - `service: owner-repo` - Hyphen converted to slash
+
+4. **Set Severity Labels**
+
+   CRISPR processes alerts based on severity. Add a `severity` label:
+   - `critical` or `high` → Processed as CRITICAL
+   - `error` → Processed as ERROR
+   - `warning` or `warn` → Processed as WARNING
+
+5. **Create a Notification Policy**
+   - Go to **Alerting > Notification policies**
+   - Add a policy that routes alerts to the CRISPR contact point
+   - You can use label matchers to only send certain alerts
+
+#### Grafana Webhook Payload Example
+
+```json
+{
+  "receiver": "crispr",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "severity": "critical",
+        "service": "api-gateway",
+        "namespace": "production",
+        "team": "platform"
+      },
+      "annotations": {
+        "summary": "Error rate exceeded 5% threshold",
+        "description": "The API gateway error rate is above 5% for the last 5 minutes",
+        "runbook_url": "https://wiki.example.com/runbooks/high-error-rate"
+      },
+      "startsAt": "2024-01-15T10:00:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "https://grafana.example.com/alerting/grafana/abc123/view",
+      "fingerprint": "abc123def456",
+      "silenceURL": "https://grafana.example.com/alerting/silence/new",
+      "dashboardURL": "https://grafana.example.com/d/abc123/api-gateway",
+      "panelURL": "https://grafana.example.com/d/abc123/api-gateway?viewPanel=1",
+      "values": {
+        "A": 0.08
+      },
+      "valueString": "[ var='A' labels={} value=0.08 ]"
+    }
+  ],
+  "groupLabels": {
+    "alertname": "HighErrorRate"
+  },
+  "commonLabels": {
+    "team": "platform",
+    "env": "production"
+  },
+  "commonAnnotations": {
+    "summary": "Error rate exceeded 5% threshold"
+  },
+  "externalURL": "https://grafana.example.com/",
+  "version": "1",
+  "groupKey": "{}:{alertname=\"HighErrorRate\"}",
+  "truncatedAlerts": 0,
+  "orgId": 1
+}
+```
+
+#### Grafana Alert Statuses
+
+| Status | Processed |
+|--------|-----------|
+| `firing` | Yes |
+| `resolved` | No (used for recovery notifications) |
+
+#### Grafana Severity Levels
+
+| Severity Label | CRISPR Level |
+|----------------|--------------|
+| `critical`, `high` | CRITICAL |
+| `error` | ERROR |
+| `warning`, `warn` | WARNING |
+| Other | ERROR (default) |
 
 ---
 
