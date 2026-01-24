@@ -535,7 +535,7 @@ export const mockActivityLogs: Record<string, Array<{ id: string; incident_id: s
 		{ id: 'act-3c', incident_id: 'inc-3', action: 'PR created', details: 'PR #89 opened', created_at: '2024-01-19T15:03:00Z' },
 		{ id: 'act-3d', incident_id: 'inc-3', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-19T16:30:00Z' },
 		{ id: 'act-3e', incident_id: 'inc-3', action: 'Verification started', details: 'Round 1 of 3 (1 hour)', created_at: '2024-01-19T16:30:00Z' },
-		{ id: 'act-3f', incident_id: 'inc-3', action: 'Verification round passed', details: 'Round 1: No ReferenceError occurrences in 1 hour', created_at: '2024-01-19T17:30:00Z' },
+		{ id: 'act-3f', incident_id: 'inc-3', action: 'Round passed', details: 'Round 1: No ReferenceError occurrences in 1 hour', created_at: '2024-01-19T17:30:00Z' },
 		{ id: 'act-3g', incident_id: 'inc-3', action: 'Verification in progress', details: 'Round 2: Monitoring for 6 hours', created_at: '2024-01-19T17:30:00Z' }
 	],
 	'inc-4': [
@@ -561,8 +561,8 @@ export const mockActivityLogs: Record<string, Array<{ id: string; incident_id: s
 		{ id: 'act-9c', incident_id: 'inc-9', action: 'PR created', details: 'PR #138 opened on acme/payments-api', created_at: '2024-01-20T10:00:00Z' },
 		{ id: 'act-9d', incident_id: 'inc-9', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-20T16:00:00Z' },
 		{ id: 'act-9e', incident_id: 'inc-9', action: 'Verification started', details: 'Round 1 of 3 (1 hour)', created_at: '2024-01-20T16:00:00Z' },
-		{ id: 'act-9f', incident_id: 'inc-9', action: 'Verification round passed', details: 'Round 1: No new occurrences in 1 hour', created_at: '2024-01-20T17:00:00Z' },
-		{ id: 'act-9g', incident_id: 'inc-9', action: 'Verification round passed', details: 'Round 2: No new occurrences in 6 hours', created_at: '2024-01-20T23:00:00Z' },
+		{ id: 'act-9f', incident_id: 'inc-9', action: 'Round passed', details: 'Round 1: No new occurrences in 1 hour', created_at: '2024-01-20T17:00:00Z' },
+		{ id: 'act-9g', incident_id: 'inc-9', action: 'Round passed', details: 'Round 2: No new occurrences in 6 hours', created_at: '2024-01-20T23:00:00Z' },
 		{ id: 'act-9h', incident_id: 'inc-9', action: 'Verification in progress', details: 'Round 3: Monitoring for 24 hours - Expected: Invalid sessions return 401 instead of NPE', created_at: '2024-01-20T23:00:00Z' }
 	],
 	'inc-10': [
@@ -571,8 +571,8 @@ export const mockActivityLogs: Record<string, Array<{ id: string; incident_id: s
 		{ id: 'act-10c', incident_id: 'inc-10', action: 'PR created', details: 'PR #85 opened', created_at: '2024-01-12T09:00:00Z' },
 		{ id: 'act-10d', incident_id: 'inc-10', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-12T14:00:00Z' },
 		{ id: 'act-10e', incident_id: 'inc-10', action: 'Verification started', details: 'Round 1 of 3', created_at: '2024-01-12T14:00:00Z' },
-		{ id: 'act-10f', incident_id: 'inc-10', action: 'Verification round passed', details: 'Round 1: Confirmed empty state renders correctly', created_at: '2024-01-12T15:00:00Z' },
-		{ id: 'act-10g', incident_id: 'inc-10', action: 'Verification round passed', details: 'Round 2: No errors during 6-hour monitoring', created_at: '2024-01-12T21:00:00Z' },
+		{ id: 'act-10f', incident_id: 'inc-10', action: 'Round passed', details: 'Round 1: Confirmed empty state renders correctly', created_at: '2024-01-12T15:00:00Z' },
+		{ id: 'act-10g', incident_id: 'inc-10', action: 'Round passed', details: 'Round 2: No errors during 6-hour monitoring', created_at: '2024-01-12T21:00:00Z' },
 		{ id: 'act-10h', incident_id: 'inc-10', action: 'Verification complete', details: 'All 3 rounds passed - Fix verified working as expected', created_at: '2024-01-13T14:00:00Z' }
 	],
 	'inc-11': [

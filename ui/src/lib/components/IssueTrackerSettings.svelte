@@ -20,12 +20,12 @@
 
 	let { projectId }: Props = $props();
 
-	let trackers: IssueTrackerConfig[] = [];
-	let jiraStatus: JiraConnectionStatus | null = null;
-	let linearStatus: LinearConnectionStatus | null = null;
-	let loading = true;
-	let error = '';
-	let success = '';
+	let trackers = $state<IssueTrackerConfig[]>([]);
+	let jiraStatus = $state<JiraConnectionStatus | null>(null);
+	let linearStatus = $state<LinearConnectionStatus | null>(null);
+	let loading = $state(true);
+	let error = $state('');
+	let success = $state('');
 
 	// Mock data for demo mode
 	const mockTrackers: IssueTrackerConfig[] = [
