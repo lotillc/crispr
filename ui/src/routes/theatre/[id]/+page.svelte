@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { projects, incidents, demoMode } from '$lib/stores';
@@ -229,8 +230,8 @@
 	}
 
 	let breadcrumbItems = $derived([
-		{ label: 'Surgery Board', href: '/' },
-		{ label: project?.repo?.split('/')[1] ?? 'Service', href: `/theatre/${projectId}` }
+		{ label: 'Surgery Board', href: base || '/' },
+		{ label: project?.repo?.split('/')[1] ?? 'Service', href: `${base}/theatre/${projectId}` }
 	]);
 </script>
 

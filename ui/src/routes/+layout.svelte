@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import { base } from '$app/paths';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { projects, incidents, stats, auth, demoMode, theme } from '$lib/stores';
@@ -27,12 +28,27 @@
 
 	let currentPath = $derived($page.url.pathname);
 
+	// Navigation items - paths are relative to base
 	const navItems = [
-		{ path: '/', label: 'Surgery Board', icon: 'board' },
+		{ path: '', label: 'Surgery Board', icon: 'board' },
 		{ path: '/recovery', label: 'Recovery Ward', icon: 'recovery' },
 		{ path: '/costs', label: 'Administration', icon: 'costs' },
 		{ path: '/settings', label: 'Settings', icon: 'settings' },
 	];
+
+	// Helper to get full path with base
+	function getNavPath(path: string): string {
+		return base + path;
+	}
+
+	// Helper to check if a nav item is active
+	function isActive(path: string): boolean {
+		const fullPath = getNavPath(path);
+		if (path === '') {
+			return currentPath === base || currentPath === base + '/';
+		}
+		return currentPath.startsWith(fullPath);
+	}
 
 	onMount(() => {
 		// Initialize demo mode and theme from localStorage
@@ -54,11 +70,6 @@
 			incidents.stopRefresh();
 		};
 	});
-
-	function isActive(path: string): boolean {
-		if (path === '/') return currentPath === '/';
-		return currentPath.startsWith(path);
-	}
 </script>
 
 <div class="app">
@@ -99,7 +110,7 @@
 		<nav id="main-navigation" class="main-nav" class:mobile-open={mobileMenuOpen} aria-label="Main navigation">
 			{#each navItems as item}
 				<a
-					href={item.path}
+					href={getNavPath(item.path)}
 					class="nav-item"
 					class:active={isActive(item.path)}
 					onclick={closeMobileMenu}

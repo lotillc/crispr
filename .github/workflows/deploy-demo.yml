@@ -37,10 +37,8 @@ jobs:
       - name: Build for GitHub Pages
         working-directory: ui
         env:
-          # Set base path for GitHub Pages
-          PUBLIC_BASE_PATH: '/${{ github.event.repository.name }}'
-          # Force demo mode for static hosting
-          PUBLIC_DEMO_MODE: 'true'
+          # Set base path for GitHub Pages (e.g., /crispr)
+          BASE_PATH: '/${{ github.event.repository.name }}'
         run: npm run build
 
       - name: Setup Pages

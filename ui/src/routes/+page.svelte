@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { projects, incidents, stats, activeIncidents, pendingPRs, toasts, demoMode } from '$lib/stores';
 	import type { Project, Incident, VerificationSummary } from '$lib/api';
 	import { validateRepoName } from '$lib/validation';
@@ -315,7 +316,7 @@
 				</div>
 				<div class="column-cards">
 					{#each triageQueue as incident (incident.id)}
-						<a href="/theatre/{incident.project_id}?incident={incident.id}" class="patient-card">
+						<a href="{base}/theatre/{incident.project_id}?incident={incident.id}" class="patient-card">
 							<div class="patient-header">
 								<span class="patient-repo">{getRepoName(incident)}</span>
 								<span class="patient-status status-{incident.status}">{getStatusLabel(incident.status)}</span>
@@ -345,7 +346,7 @@
 				</div>
 				<div class="column-cards">
 					{#each inSurgery as incident (incident.id)}
-						<a href="/theatre/{incident.project_id}?incident={incident.id}" class="patient-card active">
+						<a href="{base}/theatre/{incident.project_id}?incident={incident.id}" class="patient-card active">
 							<div class="patient-header">
 								<span class="patient-repo">{getRepoName(incident)}</span>
 								<span class="patient-status status-fixing">
@@ -380,7 +381,7 @@
 				</div>
 				<div class="column-cards">
 					{#each inRecovery as incident (incident.id)}
-						<a href="/theatre/{incident.project_id}?incident={incident.id}" class="patient-card recovery">
+						<a href="{base}/theatre/{incident.project_id}?incident={incident.id}" class="patient-card recovery">
 							<div class="patient-header">
 								<span class="patient-repo">{getRepoName(incident)}</span>
 								{#if incident.pr_number}
@@ -415,7 +416,7 @@
 					</div>
 					<div class="column-cards">
 						{#each needsAttention as incident (incident.id)}
-							<a href="/theatre/{incident.project_id}?incident={incident.id}" class="patient-card warning">
+							<a href="{base}/theatre/{incident.project_id}?incident={incident.id}" class="patient-card warning">
 								<div class="patient-header">
 									<span class="patient-repo">{getRepoName(incident)}</span>
 									<span class="patient-status status-warning">{getStatusLabel(incident.status)}</span>
@@ -485,7 +486,7 @@
 				<div class="verification-grid">
 					{#each verifyingIncidents as incident (incident.id)}
 						{@const progress = getVerificationProgress(incident)}
-						<a href="/theatre/{incident.project_id}?incident={incident.id}" class="verification-card">
+						<a href="{base}/theatre/{incident.project_id}?incident={incident.id}" class="verification-card">
 							<div class="vcard-header">
 								<span class="vcard-repo">{getRepoName(incident)}</span>
 								<span class="vcard-status" class:pending={incident.status === 'pending_verification'}>
@@ -567,7 +568,7 @@
 						{@const status = getServiceStatus(project)}
 						{@const projectIncidents = $incidents.filter(i => i.project_id === project.id)}
 						{@const activeCount = projectIncidents.filter(i => !['pr_merged', 'ignored'].includes(i.status)).length}
-						<a href="/theatre/{project.id}" class="service-card" class:critical={status === 'critical'}>
+						<a href="{base}/theatre/{project.id}" class="service-card" class:critical={status === 'critical'}>
 							<div class="service-header">
 								<div class="service-name">
 									<span class="repo-owner">{project.repo.split('/')[0]}/</span>

@@ -1,7 +1,9 @@
 import adapter from '@sveltejs/adapter-static';
 
 // Read base path from environment variable for GitHub Pages deployment
-const basePath = process.env.PUBLIC_BASE_PATH || '';
+// Use BASE_PATH for build-time configuration
+const dev = process.argv.includes('dev');
+const basePath = dev ? '' : (process.env.BASE_PATH || '');
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -9,12 +11,15 @@ const config = {
 		adapter: adapter({
 			pages: 'build',
 			assets: 'build',
-			fallback: 'index.html',
+			fallback: '404.html',
 			precompress: false,
 			strict: true
 		}),
 		paths: {
 			base: basePath
+		},
+		prerender: {
+			handleHttpError: 'warn'
 		}
 	}
 };
