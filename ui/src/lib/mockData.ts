@@ -1031,3 +1031,56 @@ export const mockUsageDetails = [
 	{ date: '2024-01-22', provider: 'anthropic', model: 'claude-3-haiku', purpose: 'triage', requests: 67, input_tokens: 134000, output_tokens: 18000, cost: 1.34 },
 	{ date: '2024-01-22', provider: 'anthropic', model: 'claude-sonnet-4', purpose: 'fix', requests: 14, input_tokens: 182000, output_tokens: 48000, cost: 4.85 },
 ];
+
+// Mock external issues for demo mode
+export function getMockExternalIssues(incidentId: string): Array<{
+	id: string;
+	incident_id: string;
+	provider: 'github' | 'jira' | 'linear' | 'webhook';
+	external_id: string;
+	external_url: string;
+	external_status: string;
+	last_synced_at: string;
+	sync_error: string | null;
+	created_at: string;
+}> {
+	// Find the incident to determine its state
+	const incident = mockIncidents.find(i => i.id === incidentId);
+	if (!incident) return [];
+
+	const issues = [];
+	const now = new Date();
+
+	// GitHub issue - always present for incidents that have progressed past triaging
+	if (['pr_open', 'pr_merged', 'verifying', 'verified', 'fixing', 'pending_fix'].includes(incident.status)) {
+		const issueNumber = Math.floor(Math.random() * 500) + 100;
+		issues.push({
+			id: `ext-gh-${incidentId}`,
+			incident_id: incidentId,
+			provider: 'github' as const,
+			external_id: `#${issueNumber}`,
+			external_url: `https://github.com/acme/api/issues/${issueNumber}`,
+			external_status: incident.status === 'verified' ? 'closed' : 'open',
+			last_synced_at: new Date(now.getTime() - Math.random() * 3600000).toISOString(),
+			sync_error: null,
+			created_at: incident.first_seen
+		});
+	}
+
+	// For some incidents, also show a Jira issue
+	if (incidentId === 'inc-2' || incidentId === 'inc-5') {
+		issues.push({
+			id: `ext-jira-${incidentId}`,
+			incident_id: incidentId,
+			provider: 'jira' as const,
+			external_id: 'CRISPR-' + (Math.floor(Math.random() * 100) + 200),
+			external_url: 'https://acme.atlassian.net/browse/CRISPR-' + (Math.floor(Math.random() * 100) + 200),
+			external_status: incident.status === 'verified' ? 'Done' : 'In Progress',
+			last_synced_at: new Date(now.getTime() - Math.random() * 7200000).toISOString(),
+			sync_error: null,
+			created_at: incident.first_seen
+		});
+	}
+
+	return issues;
+}

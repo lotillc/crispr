@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getIncidentExternalIssues, type ExternalIssue } from '$lib/api';
+	import { demoMode } from '$lib/stores';
+	import { getMockExternalIssues } from '$lib/mockData';
 
 	interface Props {
 		incidentId: string;
@@ -14,7 +16,11 @@
 
 	onMount(async () => {
 		try {
-			issues = await getIncidentExternalIssues(incidentId);
+			if ($demoMode) {
+				issues = getMockExternalIssues(incidentId) as ExternalIssue[];
+			} else {
+				issues = await getIncidentExternalIssues(incidentId);
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load external issues';
 		} finally {
