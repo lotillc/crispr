@@ -15,6 +15,7 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::api::metrics::{self, StageTimer};
 use crate::api::AppState;
 use crate::pipeline::{context, crispr_md::CrisprMdManager, fix, pr, repo::RepoManager, triage};
 use crate::store::models::{Incident, Project};
@@ -329,7 +330,7 @@ impl Worker {
         let sample: serde_json::Value = serde_json::from_slice(&sample_bytes)?;
 
         // === TRIAGE ===
-        set_state(&self.state.db, incident.id, "triaging").await?;
+        set_state(&self.state, incident.id, "triaging").await?;
         log_activity(
             &self.state.db,
             incident.id,
@@ -340,9 +341,11 @@ impl Worker {
         .await?;
 
         // Include CRISPR.md context in triage
+        let triage_timer = StageTimer::start("triage");
         let triage_result =
             triage::run_with_context(&reader, &sample, incident.id, project.id, &crispr_context)
                 .await?;
+        triage_timer.stop();
 
         if !triage_result.fixable {
             info!(
@@ -351,7 +354,7 @@ impl Worker {
                 category = %triage_result.category,
                 "Not fixable"
             );
-            set_state(&self.state.db, incident.id, "unfixable").await?;
+            set_state(&self.state, incident.id, "unfixable").await?;
             log_activity(
                 &self.state.db,
                 incident.id,
@@ -374,7 +377,7 @@ impl Worker {
         );
 
         // === CONTEXT GATHERING ===
-        set_state(&self.state.db, incident.id, "fixing").await?;
+        set_state(&self.state, incident.id, "fixing").await?;
         log_activity(
             &self.state.db,
             incident.id,
@@ -387,6 +390,7 @@ impl Worker {
         .await?;
 
         // Gather context using local repo
+        let context_timer = StageTimer::start("context");
         let context = context::gather_from_local(
             &reader,
             &self.repo_manager,
@@ -397,6 +401,7 @@ impl Worker {
             &crispr_context,
         )
         .await?;
+        context_timer.stop();
 
         info!(
             incident_id = %incident.id,
@@ -416,7 +421,9 @@ impl Worker {
         )
         .await?;
 
+        let fix_timer = StageTimer::start("fix");
         let generated_fix = fix::generate(&writer, &context, incident.id, project.id).await?;
+        fix_timer.stop();
 
         info!(
             incident_id = %incident.id,
@@ -426,7 +433,7 @@ impl Worker {
         );
 
         // === PR CREATION ===
-        set_state(&self.state.db, incident.id, "pr_opening").await?;
+        set_state(&self.state, incident.id, "pr_opening").await?;
         log_activity(
             &self.state.db,
             incident.id,
@@ -439,6 +446,7 @@ impl Worker {
         .await?;
 
         // Create PR using local repo
+        let pr_timer = StageTimer::start("pr");
         let pr_result = pr::create_from_local(
             &self.state.github,
             &self.repo_manager,
@@ -449,6 +457,7 @@ impl Worker {
             &self.state.config.safety.pr_branch_prefix,
         )
         .await?;
+        pr_timer.stop();
 
         // Update CRISPR.md with the fix record
         let error_summary = incident.title.clone().unwrap_or_else(|| "Unknown error".to_string());
@@ -501,6 +510,15 @@ impl Worker {
             pr_number = pr_result.number,
             "PR opened successfully"
         );
+
+        // Broadcast PR created event via SSE
+        self.state.events.incident_updated(
+            incident.id,
+            "pr_open",
+            Some(&pr_result.url),
+            Some(pr_result.number),
+        );
+        crate::api::events::broadcast_stats(&self.state).await;
 
         // Notify Slack if connected
         if self.state.slack.is_connected().await {
@@ -599,15 +617,22 @@ pub async fn run(state: AppState) {
     worker.run().await;
 }
 
-/// Set incident state
-async fn set_state(db: &sqlx::PgPool, incident_id: Uuid, new_state: &str) -> anyhow::Result<()> {
+/// Set incident state and broadcast via SSE
+async fn set_state(state: &AppState, incident_id: Uuid, new_state: &str) -> anyhow::Result<()> {
     sqlx::query!(
         "UPDATE incidents SET state = $1, updated_at = NOW() WHERE id = $2",
         new_state,
         incident_id
     )
-    .execute(db)
+    .execute(&state.db)
     .await?;
+
+    // Record metric
+    metrics::record_incident(new_state);
+
+    // Broadcast state change via SSE
+    state.events.incident_updated(incident_id, new_state, None, None);
+    crate::api::events::broadcast_stats(state).await;
 
     Ok(())
 }

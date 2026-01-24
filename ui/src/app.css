@@ -60,6 +60,40 @@
 	--radius-full: 9999px;
 }
 
+/* Night Shift (Dark Mode) - Dimmed Operating Room */
+:root.dark {
+	/* Dark Clinical Color Palette - like a dimmed OR at night */
+	--white: #1a1d23;
+	--ivory: #12151a;
+	--paper: #1e2228;
+	--silver: #2d333b;
+	--ash: #3d444d;
+	--slate: #6b7280;
+	--graphite: #9ca3af;
+	--charcoal: #d1d5db;
+	--ink: #e5e7eb;
+	--obsidian: #f3f4f6;
+
+	/* Medical Accents - softened for night vision */
+	--scrubs: #34d399;           /* Softer surgical green */
+	--scrubs-soft: #064e3b;      /* Deep green tint */
+	--scrubs-dark: #6ee7b7;      /* Lighter for contrast */
+	--vitals: #60a5fa;           /* Softer monitor blue */
+	--vitals-soft: #1e3a5f;      /* Deep blue tint */
+	--alert: #fbbf24;            /* Softer amber */
+	--alert-soft: #451a03;       /* Deep amber tint */
+	--critical: #f87171;         /* Softer critical red */
+	--critical-soft: #450a0a;    /* Deep red tint */
+	--stable: #a78bfa;           /* Softer purple */
+	--stable-soft: #2e1065;      /* Deep purple tint */
+
+	/* Dark mode shadows - more pronounced for depth */
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+	--shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+	--shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+}
+
 *, *::before, *::after {
 	box-sizing: border-box;
 	margin: 0;
@@ -345,4 +379,158 @@ tr:hover td {
 .mono {
 	font-family: 'SF Mono', 'Fira Code', 'Monaco', monospace;
 	font-size: 0.8125rem;
+}
+
+/* ================================
+   Mobile Utilities & Responsive Helpers
+   ================================ */
+
+/* Touch target sizing - minimum 44px for accessibility */
+.touch-target {
+	min-width: 44px;
+	min-height: 44px;
+}
+
+/* Hide on mobile (< 768px) */
+.hide-mobile {
+	display: block;
+}
+
+/* Show only on mobile */
+.show-mobile {
+	display: none;
+}
+
+/* Prevent horizontal overflow */
+.overflow-hidden {
+	overflow: hidden;
+}
+
+/* Safe area padding for notched devices */
+.safe-area-inset {
+	padding-left: env(safe-area-inset-left);
+	padding-right: env(safe-area-inset-right);
+	padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Horizontal scroll container */
+.scroll-x {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+	scrollbar-width: thin;
+}
+
+/* Snap scroll for carousels */
+.snap-x {
+	scroll-snap-type: x mandatory;
+}
+
+.snap-start {
+	scroll-snap-align: start;
+}
+
+.snap-center {
+	scroll-snap-align: center;
+}
+
+/* Prevent text selection on touch (for buttons) */
+.no-select {
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+
+/* Better tap highlighting */
+.tap-highlight {
+	-webkit-tap-highlight-color: rgba(16, 185, 129, 0.1);
+}
+
+/* Responsive text sizing */
+.text-responsive {
+	font-size: clamp(0.875rem, 2.5vw, 1rem);
+}
+
+/* Stack on mobile utility */
+.stack-mobile {
+	display: flex;
+	flex-direction: row;
+	gap: var(--space-md);
+}
+
+/* Full width on mobile */
+.full-mobile {
+	width: auto;
+}
+
+@media (max-width: 768px) {
+	.hide-mobile {
+		display: none !important;
+	}
+
+	.show-mobile {
+		display: block !important;
+	}
+
+	.stack-mobile {
+		flex-direction: column;
+	}
+
+	.full-mobile {
+		width: 100%;
+	}
+
+	/* Ensure buttons have proper touch targets on mobile */
+	.btn {
+		min-height: 44px;
+	}
+
+	/* Inputs should also have proper touch targets */
+	input, select, textarea {
+		min-height: 44px;
+	}
+
+	/* Reduce spacing on mobile */
+	.space-compact {
+		--space-lg: 1rem;
+		--space-xl: 1.5rem;
+		--space-2xl: 2rem;
+	}
+}
+
+@media (max-width: 480px) {
+	/* Extra small screen adjustments */
+	body {
+		font-size: 0.875rem;
+	}
+
+	h1 { font-size: 1.75rem; }
+	h2 { font-size: 1.375rem; }
+	h3 { font-size: 1.125rem; }
+	h4 { font-size: 1rem; }
+
+	/* Smaller padding on very small screens */
+	.btn {
+		padding: var(--space-sm) var(--space-md);
+	}
+}
+
+/* Prevent body scroll when modal is open */
+body.modal-open {
+	overflow: hidden;
+	position: fixed;
+	width: 100%;
+}
+
+/* Better focus visibility on touch devices */
+@media (hover: none) {
+	:focus-visible {
+		outline: 3px solid var(--vitals);
+		outline-offset: 3px;
+	}
+
+	/* Larger touch targets for interactive elements */
+	a, button {
+		min-height: 44px;
+		min-width: 44px;
+	}
 }

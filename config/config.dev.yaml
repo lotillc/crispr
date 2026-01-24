@@ -50,6 +50,9 @@ worker:
   claim_timeout_minutes: 15
   heartbeat_interval_seconds: 30
 
+ingest:
+  rate_limit_per_second: 100  # requests per second (default: 100)
+
 logging:
   level: debug
   format: pretty

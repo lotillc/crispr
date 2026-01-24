@@ -6,6 +6,7 @@
 	import type { Project, Incident, Sample, ActivityLog } from '$lib/api';
 
 	let projectId = $derived($page.params.id);
+	let incidentIdFromUrl = $derived($page.url.searchParams.get('incident'));
 	let project = $derived($projects.find(p => p.id === projectId));
 	let projectIncidents = $derived($incidents.filter(i => i.project_id === projectId));
 	let projectStats = $state<api.ProjectStats | null>(null);
@@ -13,6 +14,7 @@
 	let selectedIncident = $state<(Incident & { samples: Sample[]; activity: ActivityLog[] }) | null>(null);
 	let loadingIncident = $state(false);
 	let actionLoading = $state(false);
+	let hasAutoSelected = $state(false);
 
 	onMount(async () => {
 		if (projectId) {
@@ -20,6 +22,17 @@
 				projectStats = await api.getProjectStats(projectId);
 			} catch (e) {
 				console.error('Failed to load project stats:', e);
+			}
+		}
+	});
+
+	// Auto-select incident if provided in URL (reactive to handle async loading)
+	$effect(() => {
+		if (incidentIdFromUrl && projectIncidents.length > 0 && !hasAutoSelected && !selectedIncident) {
+			const incidentToSelect = projectIncidents.find(i => i.id === incidentIdFromUrl);
+			if (incidentToSelect) {
+				hasAutoSelected = true;
+				selectIncident(incidentToSelect);
 			}
 		}
 	});

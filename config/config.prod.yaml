@@ -68,6 +68,9 @@ pipeline:
   max_fix_attempts: 3
   auto_approve: false
 
+ingest:
+  rate_limit_per_second: 100  # requests per second
+
 logging:
   level: "info"
   format: "json"

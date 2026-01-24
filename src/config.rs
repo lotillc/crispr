@@ -16,6 +16,10 @@ pub struct Config {
     pub pipeline: PipelineConfig,
     #[serde(default)]
     pub worker: WorkerConfig,
+    #[serde(default)]
+    pub ingest: IngestConfig,
+    #[serde(default)]
+    pub webhooks: Option<WebhooksConfig>,
     pub logging: LoggingConfig,
 }
 
@@ -129,6 +133,32 @@ impl Default for WorkerConfig {
             heartbeat_interval_seconds: default_heartbeat_interval(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IngestConfig {
+    #[serde(default = "default_rate_limit_per_second")]
+    pub rate_limit_per_second: u32,
+}
+
+fn default_rate_limit_per_second() -> u32 {
+    100
+}
+
+impl Default for IngestConfig {
+    fn default() -> Self {
+        Self {
+            rate_limit_per_second: default_rate_limit_per_second(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct WebhooksConfig {
+    /// Secret for verifying Sentry webhook signatures
+    pub sentry_secret: Option<String>,
+    /// Token for verifying Datadog webhook requests
+    pub datadog_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

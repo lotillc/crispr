@@ -43,6 +43,10 @@ async fn main() -> Result<()> {
     let slack = integrations::slack::init(&config.slack, &db).await?;
     let llm = integrations::llm::init(&config.llm, &db).await?;
 
+    // Initialize event broadcaster for SSE
+    let events = api::EventBroadcaster::default();
+    info!("Event broadcaster initialized");
+
     // Build application state
     let state = api::AppState {
         config: config.clone(),
@@ -51,6 +55,7 @@ async fn main() -> Result<()> {
         github,
         slack,
         llm,
+        events,
     };
 
     // Start background worker

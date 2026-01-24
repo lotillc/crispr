@@ -7,7 +7,7 @@ use axum::{
 use rust_embed::RustEmbed;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use super::{auth, incidents, ingest, projects, settings, AppState};
+use super::{auth, events, incidents, ingest, metrics, projects, rate_limit, settings, webhooks, AppState};
 
 #[derive(RustEmbed)]
 #[folder = "ui/build"]
@@ -15,12 +15,33 @@ struct UiAssets;
 
 /// Build the main application router
 pub fn build(state: AppState) -> Router {
+    // Create rate limiter for ingest endpoint
+    let ingest_limiter = rate_limit::create_rate_limiter(state.config.ingest.rate_limit_per_second);
+    tracing::info!(
+        "Ingest rate limit configured: {} requests/second",
+        state.config.ingest.rate_limit_per_second
+    );
+
+    // Ingest endpoint with rate limiting
+    let ingest_route = Router::new()
+        .route("/ingest", post(ingest::http_ingest))
+        .layer(rate_limit::RateLimitLayer::new(ingest_limiter.clone()))
+        .with_state(state.clone());
+
+    // Webhook endpoints with rate limiting
+    let webhook_routes = Router::new()
+        .route("/webhooks/sentry", post(webhooks::sentry_webhook))
+        .route("/webhooks/datadog", post(webhooks::datadog_webhook))
+        .layer(rate_limit::RateLimitLayer::new(ingest_limiter))
+        .with_state(state.clone());
+
     let api = Router::new()
         // Health checks
         .route("/health", get(health))
         .route("/ready", get(ready))
-        // Ingest endpoint
-        .route("/ingest", post(ingest::http_ingest))
+        // Metrics
+        .route("/metrics", get(metrics::handler))
+        // Ingest endpoint (merged separately with rate limiting)
         // Auth endpoints
         .route("/api/v1/auth/status", get(auth::status))
         .route("/api/v1/auth/github", get(auth::github_redirect).delete(auth::github_disconnect))
@@ -45,6 +66,8 @@ pub fn build(state: AppState) -> Router {
         .route("/api/v1/incidents/:id", get(incidents::get))
         .route("/api/v1/incidents/:id/retry", post(incidents::retry))
         .route("/api/v1/incidents/:id/ignore", post(incidents::ignore))
+        // SSE events endpoint
+        .route("/api/v1/events", get(events::handler))
         // Settings endpoints
         .route(
             "/api/v1/settings/llm",
@@ -64,6 +87,8 @@ pub fn build(state: AppState) -> Router {
 
     Router::new()
         .merge(api)
+        .merge(ingest_route)
+        .merge(webhook_routes)
         .merge(ui)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())

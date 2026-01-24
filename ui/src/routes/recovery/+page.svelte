@@ -701,4 +701,145 @@
 			flex-wrap: wrap;
 		}
 	}
+
+	@media (max-width: 768px) {
+		.recovery {
+			height: auto;
+			min-height: calc(100vh - 120px);
+		}
+
+		.page-header {
+			margin-bottom: var(--space-md);
+		}
+
+		.page-header h1 {
+			font-size: 1.5rem;
+		}
+
+		.pr-list {
+			max-height: 200px;
+			border-radius: var(--radius-md);
+		}
+
+		.list-header {
+			padding: var(--space-sm) var(--space-md);
+		}
+
+		.pr-items {
+			padding: var(--space-xs);
+		}
+
+		.pr-item {
+			padding: var(--space-sm) var(--space-md);
+			min-height: 44px;
+		}
+
+		.pr-detail {
+			border-radius: var(--radius-md);
+		}
+
+		.detail-content {
+			padding: var(--space-md);
+		}
+
+		.header-badges {
+			flex-wrap: wrap;
+		}
+
+		.github-link {
+			width: 100%;
+			justify-content: center;
+			min-height: 44px;
+			font-size: 0.8125rem;
+		}
+
+		.explanation-card {
+			padding: var(--space-md);
+		}
+
+		.card-header h3 {
+			font-size: 0.875rem;
+		}
+
+		.card-content {
+			font-size: 0.875rem;
+		}
+
+		.stats-row {
+			padding: var(--space-md);
+			gap: var(--space-md);
+		}
+
+		.stat-item {
+			flex: 1;
+			min-width: 80px;
+		}
+
+		.stat-value {
+			font-size: 1rem;
+		}
+
+		.action-footer {
+			padding-top: var(--space-md);
+		}
+
+		.btn-large {
+			width: 100%;
+			min-height: 48px;
+			font-size: 0.9375rem;
+		}
+
+		.empty-state,
+		.empty-detail {
+			padding: var(--space-xl);
+		}
+
+		.empty-state .empty-icon,
+		.empty-detail .empty-icon {
+			width: 60px;
+			height: 60px;
+		}
+
+		.empty-state h2,
+		.empty-detail h3 {
+			font-size: 1.125rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.page-header h1 {
+			font-size: 1.25rem;
+		}
+
+		.pr-list {
+			max-height: 180px;
+		}
+
+		.pr-item-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: var(--space-xs);
+		}
+
+		.header-info h2 {
+			font-size: 1rem;
+		}
+
+		.files-list {
+			gap: var(--space-sm);
+		}
+
+		.file-chip {
+			font-size: 0.6875rem;
+			word-break: break-all;
+		}
+
+		.stats-row {
+			justify-content: space-between;
+		}
+
+		.stat-item {
+			text-align: center;
+		}
+	}
 </style>

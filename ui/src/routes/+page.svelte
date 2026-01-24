@@ -242,7 +242,7 @@
 				</div>
 				<div class="column-cards">
 					{#each inRecovery as incident (incident.id)}
-						<a href="/recovery" class="patient-card recovery">
+						<a href="/theatre/{incident.project_id}?incident={incident.id}" class="patient-card recovery">
 							<div class="patient-header">
 								<span class="patient-repo">{getRepoName(incident)}</span>
 								{#if incident.pr_number}
@@ -1083,12 +1083,136 @@
 			grid-template-columns: repeat(2, 1fr);
 		}
 
+		.hud-stat {
+			padding: var(--space-md);
+		}
+
+		.hud-value {
+			font-size: 1.75rem;
+		}
+
+		.hud-label {
+			font-size: 0.6875rem;
+		}
+
+		/* Horizontal scroll kanban on mobile */
 		.kanban-board {
-			grid-template-columns: 1fr;
+			display: flex;
+			gap: var(--space-md);
+			overflow-x: auto;
+			scroll-snap-type: x mandatory;
+			-webkit-overflow-scrolling: touch;
+			padding-bottom: var(--space-md);
+			margin: 0 calc(var(--space-md) * -1);
+			padding-left: var(--space-md);
+			padding-right: var(--space-md);
+		}
+
+		.kanban-column {
+			flex: 0 0 85vw;
+			max-width: 85vw;
+			scroll-snap-align: start;
+			min-height: 300px;
+		}
+
+		.column-cards {
+			max-height: 400px;
+		}
+
+		.patient-card {
+			min-height: 44px;
 		}
 
 		.service-grid {
 			grid-template-columns: 1fr;
+		}
+
+		.service-card {
+			min-height: 44px;
+		}
+
+		.control-btn {
+			width: 44px;
+			height: 44px;
+		}
+
+		.control-btn svg {
+			width: 18px;
+			height: 18px;
+		}
+
+		.tab-btn {
+			padding: var(--space-sm) var(--space-md);
+			min-height: 44px;
+		}
+
+		.section-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: var(--space-md);
+		}
+
+		.section-header .btn {
+			width: 100%;
+			min-height: 44px;
+		}
+
+		/* Modal adjustments */
+		.modal {
+			margin: var(--space-md);
+			max-width: calc(100% - var(--space-xl));
+		}
+
+		.modal-footer {
+			flex-direction: column;
+		}
+
+		.modal-footer .btn {
+			width: 100%;
+			min-height: 44px;
+		}
+
+		/* Discharged section on mobile */
+		.discharged-section {
+			padding: var(--space-md);
+		}
+
+		.discharged-item {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: var(--space-xs);
+		}
+
+		.discharged-repo {
+			min-width: unset;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.hud {
+			gap: var(--space-sm);
+		}
+
+		.hud-stat {
+			padding: var(--space-sm);
+		}
+
+		.hud-value {
+			font-size: 1.5rem;
+		}
+
+		.kanban-column {
+			flex: 0 0 90vw;
+			max-width: 90vw;
+		}
+
+		.tab-nav {
+			overflow-x: auto;
+			-webkit-overflow-scrolling: touch;
+		}
+
+		.tab-btn {
+			white-space: nowrap;
 		}
 	}
 </style>

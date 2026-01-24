@@ -19,6 +19,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::api::metrics;
 use crate::config::LlmConfigFile;
 
 pub mod anthropic;
@@ -190,6 +191,14 @@ impl TrackedLlm {
         project_id: Option<Uuid>,
     ) -> Result<LlmResponse> {
         let response = self.inner.complete(prompt, system).await?;
+
+        // Record metrics
+        metrics::record_llm_request(self.inner.provider_name(), operation);
+        metrics::record_llm_tokens(
+            self.inner.provider_name(),
+            response.input_tokens,
+            response.output_tokens,
+        );
 
         // Calculate cost
         let cost = self.pricing.calculate_cost(

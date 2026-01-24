@@ -839,22 +839,133 @@
 	}
 
 	@media (max-width: 768px) {
+		.settings-page {
+			padding: 0;
+		}
+
+		.page-header h1 {
+			font-size: 1.5rem;
+		}
+
 		.llm-grid {
 			grid-template-columns: 1fr;
+		}
+
+		.llm-card {
+			padding: var(--space-md);
+		}
+
+		.llm-header {
+			padding-bottom: var(--space-md);
+			margin-bottom: var(--space-md);
+		}
+
+		.connection-card {
+			padding: var(--space-md);
 		}
 
 		.connection-main {
 			flex-direction: column;
 			text-align: center;
+			gap: var(--space-md);
+		}
+
+		.connection-icon {
+			width: 56px;
+			height: 56px;
+		}
+
+		.connection-icon svg {
+			width: 28px;
+			height: 28px;
+		}
+
+		.connection-status .btn {
+			min-height: 44px;
+			width: 100%;
 		}
 
 		.channel-selector {
 			flex-direction: column;
 			align-items: flex-start;
+			gap: var(--space-sm);
+		}
+
+		.channel-label {
+			min-width: unset;
 		}
 
 		.channel-controls {
 			width: 100%;
+			flex-direction: column;
+		}
+
+		.channel-select {
+			max-width: none;
+			min-height: 44px;
+		}
+
+		.channel-controls .btn {
+			min-height: 44px;
+		}
+
+		.slack-actions {
+			flex-direction: column;
+		}
+
+		.slack-actions .btn {
+			min-height: 44px;
+		}
+
+		/* Form fields */
+		.field-input,
+		.field-select {
+			min-height: 44px;
+		}
+
+		.model-input {
+			flex-direction: column;
+		}
+
+		.model-input .btn {
+			min-height: 44px;
+		}
+
+		.llm-actions {
+			flex-direction: column;
+		}
+
+		.llm-actions .btn {
+			width: 100%;
+			min-height: 44px;
+		}
+
+		/* Models list */
+		.models-list {
+			padding: var(--space-md);
+		}
+
+		.model-chip {
+			padding: var(--space-sm) var(--space-md);
+			min-height: 44px;
+			display: flex;
+			align-items: center;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.page-header h1 {
+			font-size: 1.25rem;
+		}
+
+		.settings-section h2 {
+			font-size: 1rem;
+		}
+
+		.llm-title {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: var(--space-xs);
 		}
 	}
 </style>

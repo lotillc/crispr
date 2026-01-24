@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use uuid::Uuid;
 
+use super::metrics;
 use super::AppState;
 use crate::error::AppError;
 use crate::pipeline::fingerprint;
@@ -49,6 +50,9 @@ pub async fn http_ingest(
     State(state): State<AppState>,
     Json(payload): Json<IngestPayload>,
 ) -> Result<Json<IngestResponse>, AppError> {
+    // Record ingest request metric
+    metrics::record_ingest();
+
     // Only process errors
     let level = payload.level.to_uppercase();
     if !matches!(level.as_str(), "ERROR" | "FATAL" | "CRITICAL" | "SEVERE") {
@@ -194,6 +198,17 @@ pub async fn http_ingest(
             fingerprint = %fp,
             "New incident created"
         );
+
+        // Broadcast incident:created event via SSE
+        state.events.incident_created(
+            incident.id,
+            project.id,
+            &truncate_title(&payload.message),
+            "detected",
+        );
+
+        // Broadcast updated stats
+        super::events::broadcast_stats(&state).await;
     } else {
         info!(
             incident_id = %incident.id,

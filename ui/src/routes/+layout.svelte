@@ -2,12 +2,26 @@
 	import '../app.css';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
-	import { projects, incidents, stats, auth, demoMode } from '$lib/stores';
+	import { projects, incidents, stats, auth, demoMode, theme } from '$lib/stores';
 
 	let { children } = $props();
 
+	let mobileMenuOpen = $state(false);
+
 	function toggleDemoMode() {
 		demoMode.toggle();
+	}
+
+	function toggleTheme() {
+		theme.toggle();
+	}
+
+	function toggleMobileMenu() {
+		mobileMenuOpen = !mobileMenuOpen;
+	}
+
+	function closeMobileMenu() {
+		mobileMenuOpen = false;
 	}
 
 	let currentPath = $derived($page.url.pathname);
@@ -20,8 +34,9 @@
 	];
 
 	onMount(() => {
-		// Initialize demo mode from localStorage
+		// Initialize demo mode and theme from localStorage
 		demoMode.init();
+		theme.init();
 
 		// Initial load
 		projects.load();
@@ -58,12 +73,31 @@
 			<span class="logo-subtitle">Surgery Center</span>
 		</div>
 
-		<nav class="main-nav">
+		<!-- Mobile Menu Button -->
+		<button
+			class="mobile-menu-btn"
+			onclick={toggleMobileMenu}
+			aria-label="Toggle navigation menu"
+			aria-expanded={mobileMenuOpen}
+		>
+			{#if mobileMenuOpen}
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+				</svg>
+			{:else}
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+				</svg>
+			{/if}
+		</button>
+
+		<nav class="main-nav" class:mobile-open={mobileMenuOpen}>
 			{#each navItems as item}
 				<a
 					href={item.path}
 					class="nav-item"
 					class:active={isActive(item.path)}
+					onclick={closeMobileMenu}
 				>
 					{#if item.icon === 'board'}
 						<svg viewBox="0 0 20 20" fill="currentColor">
@@ -89,6 +123,23 @@
 		</nav>
 
 		<div class="header-right">
+			<button
+				class="night-shift-btn"
+				class:active={$theme === 'dark'}
+				onclick={toggleTheme}
+				title={$theme === 'dark' ? 'Switch to Day Mode' : 'Switch to Night Shift'}
+			>
+				{#if $theme === 'dark'}
+					<svg class="theme-icon" viewBox="0 0 20 20" fill="currentColor">
+						<path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
+					</svg>
+				{:else}
+					<svg class="theme-icon" viewBox="0 0 20 20" fill="currentColor">
+						<path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+					</svg>
+				{/if}
+				<span class="night-shift-label">Night Shift</span>
+			</button>
 			<div class="mode-toggle">
 				<button
 					class="toggle-btn"
@@ -232,6 +283,43 @@
 		color: var(--charcoal);
 	}
 
+	.night-shift-btn {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-xs) var(--space-sm);
+		background: transparent;
+		border: 1px solid var(--silver);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		color: var(--graphite);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		font-weight: 500;
+	}
+
+	.night-shift-btn:hover {
+		background: var(--paper);
+		border-color: var(--slate);
+		color: var(--charcoal);
+	}
+
+	.night-shift-btn.active {
+		background: var(--stable-soft);
+		border-color: var(--stable);
+		color: var(--stable);
+	}
+
+	.theme-icon {
+		width: 16px;
+		height: 16px;
+	}
+
+	.night-shift-label {
+		letter-spacing: 0.02em;
+	}
+
 	.mode-toggle {
 		display: flex;
 		align-items: center;
@@ -305,22 +393,124 @@
 		width: 100%;
 	}
 
+	/* Mobile Menu Button */
+	.mobile-menu-btn {
+		display: none;
+		width: 44px;
+		height: 44px;
+		align-items: center;
+		justify-content: center;
+		background: transparent;
+		border: 1px solid var(--silver);
+		border-radius: var(--radius-md);
+		color: var(--graphite);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.mobile-menu-btn:hover {
+		background: var(--paper);
+		color: var(--charcoal);
+	}
+
+	.mobile-menu-btn svg {
+		width: 24px;
+		height: 24px;
+	}
+
 	@media (max-width: 768px) {
 		.top-bar {
 			padding: var(--space-sm) var(--space-md);
-			gap: var(--space-md);
+			gap: var(--space-sm);
+			flex-wrap: wrap;
+		}
+
+		.logo {
+			flex: 1;
 		}
 
 		.logo-subtitle {
 			display: none;
 		}
 
+		.mobile-menu-btn {
+			display: flex;
+			order: 2;
+		}
+
+		.main-nav {
+			display: none;
+			position: absolute;
+			top: 100%;
+			left: 0;
+			right: 0;
+			background: var(--white);
+			border-bottom: 1px solid var(--silver);
+			padding: var(--space-md);
+			flex-direction: column;
+			gap: var(--space-xs);
+			box-shadow: var(--shadow-lg);
+			z-index: 99;
+		}
+
+		.main-nav.mobile-open {
+			display: flex;
+		}
+
+		.nav-item {
+			padding: var(--space-md);
+			min-height: 44px;
+		}
+
 		.nav-item span {
+			display: inline;
+		}
+
+		.header-right {
+			order: 3;
+			width: 100%;
+			justify-content: flex-end;
+			padding-top: var(--space-sm);
+			border-top: 1px solid var(--paper);
+			margin-top: var(--space-sm);
+		}
+
+		.night-shift-label {
+			display: none;
+		}
+
+		.status-text {
+			display: none;
+		}
+
+		.toggle-label {
 			display: none;
 		}
 
 		.main-content {
 			padding: var(--space-md);
+		}
+	}
+
+	@media (max-width: 480px) {
+		.logo-text {
+			font-size: 1rem;
+		}
+
+		.header-right {
+			gap: var(--space-sm);
+		}
+
+		.night-shift-btn {
+			padding: var(--space-xs);
+		}
+
+		.toggle-btn {
+			padding: var(--space-xs);
+		}
+
+		.status-indicator {
+			padding: var(--space-xs) var(--space-sm);
 		}
 	}
 </style>
