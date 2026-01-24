@@ -127,6 +127,36 @@
 	let grafanaEnabled = $state(false);
 	let grafanaToken = $state('');
 
+	// Token visibility state
+	let showDatadogToken = $state(false);
+	let showGrafanaToken = $state(false);
+
+	// Generate a secure random token
+	function generateToken(): string {
+		const array = new Uint8Array(32);
+		crypto.getRandomValues(array);
+		return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+	}
+
+	function generateDatadogToken() {
+		datadogToken = generateToken();
+		showDatadogToken = true;
+	}
+
+	function generateGrafanaToken() {
+		grafanaToken = generateToken();
+		showGrafanaToken = true;
+	}
+
+	async function copyToClipboard(text: string) {
+		await navigator.clipboard.writeText(text);
+		toasts.success('Copied to clipboard');
+	}
+
+	function getWebhookUrl(path: string): string {
+		return `${window.location.origin}${path}`;
+	}
+
 	const providers = [
 		{ value: 'anthropic', label: 'Anthropic (Claude)' },
 		{ value: 'openai', label: 'OpenAI (GPT)' },
@@ -506,20 +536,36 @@
 					</div>
 					{#if sentryEnabled}
 						<div class="webhook-config">
+							<div class="webhook-instructions">
+								<h4>Setup Instructions</h4>
+								<ol>
+									<li>In Sentry, go to <strong>Settings → Integrations → Webhooks</strong></li>
+									<li>Add the webhook URL below</li>
+									<li>Set a <strong>Secret</strong> in Sentry, then enter it here</li>
+									<li>Select which events to send (Issues, Errors, etc.)</li>
+								</ol>
+							</div>
 							<div class="field">
-								<label class="field-label" for="sentry-secret">Webhook Secret</label>
+								<label class="field-label" for="sentry-secret">Webhook Secret (from Sentry)</label>
 								<input
 									id="sentry-secret"
 									type="password"
 									bind:value={sentrySecret}
-									placeholder={webhookSettings?.sentry.has_secret ? '••••••••' : 'Enter HMAC secret'}
+									placeholder={webhookSettings?.sentry.has_secret ? '••••••••' : 'Paste secret from Sentry'}
 									class="field-input"
 								/>
-								<span class="field-hint">HMAC-SHA256 secret for signature verification</span>
 							</div>
-							<div class="webhook-url">
-								<span class="label">Webhook URL:</span>
-								<code>/webhooks/sentry</code>
+							<div class="webhook-url-field">
+								<label class="field-label">Webhook URL</label>
+								<div class="copyable-field">
+									<code>{getWebhookUrl('/webhooks/sentry')}</code>
+									<button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(getWebhookUrl('/webhooks/sentry'))} aria-label="Copy webhook URL">
+										<svg viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
+											<path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/>
+											<path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"/>
+										</svg>
+									</button>
+								</div>
 							</div>
 						</div>
 					{/if}
@@ -544,20 +590,53 @@
 					</div>
 					{#if datadogEnabled}
 						<div class="webhook-config">
-							<div class="field">
-								<label class="field-label" for="datadog-token">Webhook Token</label>
-								<input
-									id="datadog-token"
-									type="password"
-									bind:value={datadogToken}
-									placeholder={webhookSettings?.datadog.has_secret ? '••••••••' : 'Enter token'}
-									class="field-input"
-								/>
-								<span class="field-hint">Token sent in X-Datadog-Token header</span>
+							<div class="webhook-instructions">
+								<h4>Setup Instructions</h4>
+								<ol>
+									<li>Generate a token below, then <strong>save settings</strong></li>
+									<li>In Datadog, go to <strong>Integrations → Webhooks</strong></li>
+									<li>Create a new webhook with the URL below</li>
+									<li>Add custom header: <code>X-Datadog-Token: <em>your-token</em></code></li>
+								</ol>
 							</div>
-							<div class="webhook-url">
-								<span class="label">Webhook URL:</span>
-								<code>/webhooks/datadog</code>
+							<div class="field">
+								<label class="field-label" for="datadog-token">Authentication Token</label>
+								<div class="token-field">
+									<input
+										id="datadog-token"
+										type={showDatadogToken ? 'text' : 'password'}
+										bind:value={datadogToken}
+										placeholder={webhookSettings?.datadog.has_secret ? '••••••••' : 'Click Generate to create token'}
+										class="field-input"
+										readonly={!showDatadogToken && !datadogToken}
+									/>
+									<button class="btn btn-secondary btn-sm" onclick={generateDatadogToken}>
+										Generate
+									</button>
+									{#if datadogToken}
+										<button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(datadogToken)} aria-label="Copy token">
+											<svg viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
+												<path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/>
+												<path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"/>
+											</svg>
+										</button>
+									{/if}
+								</div>
+								{#if showDatadogToken && datadogToken}
+									<span class="field-hint field-hint-warning">Copy this token now - it won't be shown again after saving</span>
+								{/if}
+							</div>
+							<div class="webhook-url-field">
+								<label class="field-label">Webhook URL</label>
+								<div class="copyable-field">
+									<code>{getWebhookUrl('/webhooks/datadog')}</code>
+									<button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(getWebhookUrl('/webhooks/datadog'))} aria-label="Copy webhook URL">
+										<svg viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
+											<path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/>
+											<path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"/>
+										</svg>
+									</button>
+								</div>
 							</div>
 						</div>
 					{/if}
@@ -582,20 +661,53 @@
 					</div>
 					{#if grafanaEnabled}
 						<div class="webhook-config">
+							<div class="webhook-instructions">
+								<h4>Setup Instructions</h4>
+								<ol>
+									<li>Generate a token below, then <strong>save settings</strong></li>
+									<li>In Grafana, go to <strong>Alerting → Contact points</strong></li>
+									<li>Create a new contact point with type <strong>Webhook</strong></li>
+									<li>Set the URL below and add header:<br/><code>Authorization: Bearer <em>your-token</em></code></li>
+								</ol>
+							</div>
 							<div class="field">
 								<label class="field-label" for="grafana-token">Bearer Token</label>
-								<input
-									id="grafana-token"
-									type="password"
-									bind:value={grafanaToken}
-									placeholder={webhookSettings?.grafana.has_secret ? '••••••••' : 'Enter token'}
-									class="field-input"
-								/>
-								<span class="field-hint">Bearer token for Authorization header</span>
+								<div class="token-field">
+									<input
+										id="grafana-token"
+										type={showGrafanaToken ? 'text' : 'password'}
+										bind:value={grafanaToken}
+										placeholder={webhookSettings?.grafana.has_secret ? '••••••••' : 'Click Generate to create token'}
+										class="field-input"
+										readonly={!showGrafanaToken && !grafanaToken}
+									/>
+									<button class="btn btn-secondary btn-sm" onclick={generateGrafanaToken}>
+										Generate
+									</button>
+									{#if grafanaToken}
+										<button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(grafanaToken)} aria-label="Copy token">
+											<svg viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
+												<path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/>
+												<path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"/>
+											</svg>
+										</button>
+									{/if}
+								</div>
+								{#if showGrafanaToken && grafanaToken}
+									<span class="field-hint field-hint-warning">Copy this token now - it won't be shown again after saving</span>
+								{/if}
 							</div>
-							<div class="webhook-url">
-								<span class="label">Webhook URL:</span>
-								<code>/webhooks/grafana</code>
+							<div class="webhook-url-field">
+								<label class="field-label">Webhook URL</label>
+								<div class="copyable-field">
+									<code>{getWebhookUrl('/webhooks/grafana')}</code>
+									<button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(getWebhookUrl('/webhooks/grafana'))} aria-label="Copy webhook URL">
+										<svg viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
+											<path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/>
+											<path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"/>
+										</svg>
+									</button>
+								</div>
 							</div>
 						</div>
 					{/if}
@@ -1562,6 +1674,100 @@
 		margin-top: var(--space-lg);
 		display: flex;
 		justify-content: flex-end;
+	}
+
+	/* Webhook Instructions */
+	.webhook-instructions {
+		background: var(--paper);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		margin-bottom: var(--space-lg);
+	}
+
+	.webhook-instructions h4 {
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		margin-bottom: var(--space-sm);
+		color: var(--charcoal);
+	}
+
+	.webhook-instructions ol {
+		margin: 0;
+		padding-left: var(--space-lg);
+		font-size: 0.8125rem;
+		color: var(--graphite);
+		line-height: 1.6;
+	}
+
+	.webhook-instructions li {
+		margin-bottom: var(--space-xs);
+	}
+
+	.webhook-instructions code {
+		font-family: 'SF Mono', monospace;
+		font-size: 0.75rem;
+		background: var(--white);
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--silver);
+	}
+
+	.webhook-instructions em {
+		color: var(--slate);
+		font-style: normal;
+	}
+
+	/* Token Field */
+	.token-field {
+		display: flex;
+		gap: var(--space-sm);
+	}
+
+	.token-field .field-input {
+		flex: 1;
+		font-family: 'SF Mono', monospace;
+		font-size: 0.875rem;
+	}
+
+	/* Copyable Field */
+	.webhook-url-field {
+		margin-top: var(--space-md);
+	}
+
+	.copyable-field {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		background: var(--paper);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--silver);
+	}
+
+	.copyable-field code {
+		flex: 1;
+		font-family: 'SF Mono', monospace;
+		font-size: 0.8125rem;
+		color: var(--charcoal);
+		word-break: break-all;
+	}
+
+	.copy-icon {
+		width: 16px;
+		height: 16px;
+	}
+
+	/* Small button variant */
+	.btn-sm {
+		padding: var(--space-xs) var(--space-sm);
+		font-size: 0.8125rem;
+	}
+
+	/* Warning hint */
+	.field-hint-warning {
+		color: var(--warning-dark, #B45309);
+		font-weight: 500;
 	}
 
 	/* Toggle Switch */
