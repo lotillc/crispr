@@ -18,8 +18,14 @@ pub struct Metrics {
     /// Total incidents by status
     pub incidents_total: CounterVec,
 
-    /// Total ingest requests
+    /// Total ingest requests (HTTP)
     pub ingest_requests_total: Counter,
+
+    /// Total gRPC ingest log records processed
+    pub grpc_logs_processed_total: Counter,
+
+    /// Total incidents created via gRPC
+    pub grpc_incidents_total: Counter,
 
     /// Pipeline stage duration in seconds
     pub pipeline_duration_seconds: HistogramVec,
@@ -37,7 +43,10 @@ impl Metrics {
 
         // crispr_incidents_total
         let incidents_total = CounterVec::new(
-            Opts::new("crispr_incidents_total", "Total number of incidents by status"),
+            Opts::new(
+                "crispr_incidents_total",
+                "Total number of incidents by status",
+            ),
             &["status"],
         )
         .expect("Failed to create incidents_total metric");
@@ -48,12 +57,32 @@ impl Metrics {
         // crispr_ingest_requests_total
         let ingest_requests_total = Counter::new(
             "crispr_ingest_requests_total",
-            "Total number of ingest requests",
+            "Total number of HTTP ingest requests",
         )
         .expect("Failed to create ingest_requests_total metric");
         registry
             .register(Box::new(ingest_requests_total.clone()))
             .expect("Failed to register ingest_requests_total");
+
+        // crispr_grpc_logs_processed_total
+        let grpc_logs_processed_total = Counter::new(
+            "crispr_grpc_logs_processed_total",
+            "Total number of log records processed via gRPC OTLP",
+        )
+        .expect("Failed to create grpc_logs_processed_total metric");
+        registry
+            .register(Box::new(grpc_logs_processed_total.clone()))
+            .expect("Failed to register grpc_logs_processed_total");
+
+        // crispr_grpc_incidents_total
+        let grpc_incidents_total = Counter::new(
+            "crispr_grpc_incidents_total",
+            "Total number of incidents created via gRPC OTLP",
+        )
+        .expect("Failed to create grpc_incidents_total metric");
+        registry
+            .register(Box::new(grpc_incidents_total.clone()))
+            .expect("Failed to register grpc_incidents_total");
 
         // crispr_pipeline_duration_seconds
         let pipeline_duration_seconds = HistogramVec::new(
@@ -61,7 +90,9 @@ impl Metrics {
                 "crispr_pipeline_duration_seconds",
                 "Duration of pipeline stages in seconds",
             )
-            .buckets(vec![0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0]),
+            .buckets(vec![
+                0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0,
+            ]),
             &["stage"],
         )
         .expect("Failed to create pipeline_duration_seconds metric");
@@ -71,7 +102,10 @@ impl Metrics {
 
         // crispr_llm_requests_total
         let llm_requests_total = CounterVec::new(
-            Opts::new("crispr_llm_requests_total", "Total LLM requests by provider and purpose"),
+            Opts::new(
+                "crispr_llm_requests_total",
+                "Total LLM requests by provider and purpose",
+            ),
             &["provider", "purpose"],
         )
         .expect("Failed to create llm_requests_total metric");
@@ -81,7 +115,10 @@ impl Metrics {
 
         // crispr_llm_tokens_total
         let llm_tokens_total = CounterVec::new(
-            Opts::new("crispr_llm_tokens_total", "Total LLM tokens by provider and direction"),
+            Opts::new(
+                "crispr_llm_tokens_total",
+                "Total LLM tokens by provider and direction",
+            ),
             &["provider", "direction"],
         )
         .expect("Failed to create llm_tokens_total metric");
@@ -93,6 +130,8 @@ impl Metrics {
             registry,
             incidents_total,
             ingest_requests_total,
+            grpc_logs_processed_total,
+            grpc_incidents_total,
             pipeline_duration_seconds,
             llm_requests_total,
             llm_tokens_total,
@@ -119,9 +158,19 @@ pub fn record_incident(status: &str) {
     metrics().incidents_total.with_label_values(&[status]).inc();
 }
 
-/// Record an ingest request
+/// Record an HTTP ingest request
 pub fn record_ingest() {
     metrics().ingest_requests_total.inc();
+}
+
+/// Record gRPC OTLP ingest statistics
+pub fn record_grpc_ingest(logs_processed: u64, incidents_created: u64) {
+    metrics()
+        .grpc_logs_processed_total
+        .inc_by(logs_processed as f64);
+    metrics()
+        .grpc_incidents_total
+        .inc_by(incidents_created as f64);
 }
 
 /// Record LLM request

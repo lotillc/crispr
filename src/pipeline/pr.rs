@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use crate::integrations::github::{GitHubClient, PullRequest};
 use crate::integrations::llm::TrackedLlm;
-use crate::store::models::{Incident, Project};
+use crate::store::models::{GeneratedTestRecord, Incident, Project};
 
-use super::fix::GeneratedFix;
+use super::fix::{GeneratedFix, GeneratedTest};
 use super::repo::RepoManager;
 
 /// Result of PR creation
@@ -28,6 +28,9 @@ pub struct PrResult {
 }
 
 /// Create a PR with the generated fix
+///
+/// If `tests_to_include` is provided, only those tests will be added to the PR.
+/// If `None`, all tests from the fix will be included.
 pub async fn create(
     github: &Arc<GitHubClient>,
     llm: &TrackedLlm,
@@ -35,10 +38,17 @@ pub async fn create(
     incident: &Incident,
     fix: &GeneratedFix,
     branch_prefix: &str,
+    tests_to_include: Option<&[GeneratedTest]>,
 ) -> Result<PrResult> {
     let owner = &project.github_owner;
     let repo = &project.github_repo;
     let default_branch = project.default_branch.as_deref().unwrap_or("main");
+
+    // Determine which tests to include
+    let tests: Vec<&GeneratedTest> = match tests_to_include {
+        Some(tests) => tests.iter().collect(),
+        None => fix.generated_tests.iter().collect(),
+    };
 
     // Generate branch name
     let branch_name = format!(
@@ -68,8 +78,8 @@ pub async fn create(
         ).await?;
     }
 
-    // Commit generated test files
-    for test in &fix.generated_tests {
+    // Commit generated test files (only those marked for inclusion)
+    for test in &tests {
         github.create_or_update_file(
             owner,
             repo,
@@ -110,7 +120,7 @@ pub async fn create(
         branch: branch_name,
         title: pr_title,
         files_changed: fix.file_count(),
-        tests_added: fix.test_count(),
+        tests_added: tests.len(),
     })
 }
 
@@ -217,6 +227,9 @@ async fn generate_pr_body(
 ///
 /// This function handles both single-file and multi-file fixes. For multi-file fixes,
 /// all changes are committed atomically in a single commit to ensure consistency.
+///
+/// If `tests_to_include` is provided, only those tests will be added to the PR.
+/// If `None`, all tests from the fix will be included.
 pub async fn create_from_local(
     github: &Arc<GitHubClient>,
     repo_manager: &RepoManager,
@@ -225,10 +238,17 @@ pub async fn create_from_local(
     incident: &Incident,
     fix: &GeneratedFix,
     branch_prefix: &str,
+    tests_to_include: Option<&[GeneratedTest]>,
 ) -> Result<PrResult> {
     let owner = &project.github_owner;
     let repo = &project.github_repo;
     let default_branch = project.default_branch.as_deref().unwrap_or("main");
+
+    // Determine which tests to include
+    let tests: Vec<&GeneratedTest> = match tests_to_include {
+        Some(tests) => tests.iter().collect(),
+        None => fix.generated_tests.iter().collect(),
+    };
 
     // Log multi-file fix information
     if fix.is_multi_file() {
@@ -267,9 +287,9 @@ pub async fn create_from_local(
         changed_files.push(change.path.clone());
     }
 
-    // Write all generated test files
+    // Write only the tests marked for inclusion
     let mut test_files: Vec<String> = Vec::new();
-    for test in &fix.generated_tests {
+    for test in &tests {
         tracing::debug!(path = %test.path, framework = %test.framework, "Writing generated test file");
         repo_manager.write_file(owner, repo, &test.path, &test.content)?;
         test_files.push(test.path.clone());
@@ -343,8 +363,18 @@ pub async fn create_from_local(
         branch: branch_name,
         title: pr_title,
         files_changed: fix.file_count(),
-        tests_added: fix.test_count(),
+        tests_added: tests.len(),
     })
+}
+
+/// Convert a GeneratedTestRecord from the database to a GeneratedTest for PR inclusion
+pub fn test_record_to_generated_test(record: &GeneratedTestRecord) -> GeneratedTest {
+    GeneratedTest {
+        path: record.file_path.clone(),
+        content: record.content.clone(),
+        description: record.description.clone().unwrap_or_default(),
+        framework: record.framework.clone(),
+    }
 }
 
 /// Sanitize a string for use in a git branch name

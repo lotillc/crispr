@@ -1,5 +1,5 @@
 // Mock data for demo mode
-import type { Project, Incident, AuthStatus, UsageSummary, IncidentStats } from './api';
+import type { Project, Incident, AuthStatus, UsageSummary, IncidentStats, GeneratedTest } from './api';
 
 export const mockProjects: Project[] = [
 	{
@@ -418,6 +418,251 @@ export function getMockIncidentDetails(id: string) {
 		samples: mockSamples[id] || [],
 		activity: mockActivityLogs[id] || []
 	};
+}
+
+// Mock generated tests for incidents
+export const mockGeneratedTests: Record<string, GeneratedTest[]> = {
+	'inc-1': [
+		{
+			id: 'test-1a',
+			incident_id: 'inc-1',
+			file_path: 'src/handlers/__tests__/payment.test.ts',
+			content: `import { processRefund } from '../payment';
+import { createMockRequest, createMockResponse } from '../../test-utils';
+
+describe('processRefund', () => {
+  it('should return 401 when user session is missing', async () => {
+    const req = createMockRequest({ user: undefined });
+    const res = createMockResponse();
+
+    await processRefund(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Unauthorized',
+      message: 'User session required'
+    });
+  });
+
+  it('should return 401 when user object exists but userId is undefined', async () => {
+    const req = createMockRequest({ user: {} });
+    const res = createMockResponse();
+
+    await processRefund(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it('should process refund successfully with valid user session', async () => {
+    const req = createMockRequest({
+      user: { userId: 'user-123' },
+      body: { orderId: 'order-456', amount: 50.00 }
+    });
+    const res = createMockResponse();
+
+    await processRefund(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+});`,
+			description: 'Tests for null/undefined user session handling in processRefund',
+			framework: 'jest',
+			included_in_pr: true,
+			commit_sha: 'abc123def',
+			created_at: '2024-01-20T10:05:00Z'
+		}
+	],
+	'inc-2': [
+		{
+			id: 'test-2a',
+			incident_id: 'inc-2',
+			file_path: 'src/validators/__tests__/amount.test.ts',
+			content: `import { validateAmount } from '../amount';
+
+describe('validateAmount', () => {
+  it('should accept positive numbers', () => {
+    expect(() => validateAmount(100)).not.toThrow();
+    expect(() => validateAmount(0.01)).not.toThrow();
+  });
+
+  it('should reject negative numbers', () => {
+    expect(() => validateAmount(-50)).toThrow('Amount must be a positive number');
+  });
+
+  it('should reject zero', () => {
+    expect(() => validateAmount(0)).toThrow('Amount must be a positive number');
+  });
+
+  it('should coerce string numbers to numbers', () => {
+    expect(() => validateAmount('100' as any)).not.toThrow();
+    expect(() => validateAmount('-50' as any)).toThrow();
+  });
+
+  it('should reject non-numeric strings', () => {
+    expect(() => validateAmount('abc' as any)).toThrow();
+  });
+});`,
+			description: 'Tests for amount validation including type coercion',
+			framework: 'jest',
+			included_in_pr: false,
+			created_at: '2024-01-21T08:02:00Z'
+		}
+	],
+	'inc-3': [
+		{
+			id: 'test-3a',
+			incident_id: 'inc-3',
+			file_path: 'src/controllers/__tests__/user.test.ts',
+			content: `import { UserController } from '../user';
+import { getProfile } from '../../utils/profile';
+
+jest.mock('../../utils/profile');
+
+describe('UserController', () => {
+  const controller = new UserController();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('show', () => {
+    it('should call getProfile with user id', async () => {
+      const mockProfile = { id: 'user-1', name: 'Test User' };
+      (getProfile as jest.Mock).mockResolvedValue(mockProfile);
+
+      const result = await controller.show('user-1');
+
+      expect(getProfile).toHaveBeenCalledWith('user-1');
+      expect(result).toEqual(mockProfile);
+    });
+
+    it('should throw when user not found', async () => {
+      (getProfile as jest.Mock).mockResolvedValue(null);
+
+      await expect(controller.show('nonexistent')).rejects.toThrow('User not found');
+    });
+  });
+});`,
+			description: 'Tests for UserController.show method with getProfile import',
+			framework: 'jest',
+			included_in_pr: true,
+			commit_sha: 'def456ghi',
+			created_at: '2024-01-19T15:02:00Z'
+		}
+	],
+	'inc-8': [
+		{
+			id: 'test-8a',
+			incident_id: 'inc-8',
+			file_path: 'src/api/__tests__/client.test.ts',
+			content: `import { ApiClient } from '../client';
+
+describe('ApiClient', () => {
+  let client: ApiClient;
+
+  beforeEach(() => {
+    client = new ApiClient('https://api.example.com');
+    global.fetch = jest.fn();
+  });
+
+  describe('parseResponse', () => {
+    it('should parse JSON responses correctly', async () => {
+      const mockResponse = {
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: jest.fn().mockResolvedValue({ data: 'test' })
+      };
+
+      const result = await client.parseResponse(mockResponse as any);
+
+      expect(result).toEqual({ data: 'test' });
+    });
+
+    it('should throw ApiError for HTML responses', async () => {
+      const mockResponse = {
+        ok: false,
+        status: 502,
+        headers: new Headers({ 'content-type': 'text/html' }),
+        text: jest.fn().mockResolvedValue('<!DOCTYPE html><html>Error</html>')
+      };
+
+      await expect(client.parseResponse(mockResponse as any))
+        .rejects.toThrow('Received non-JSON response (status: 502)');
+    });
+
+    it('should handle missing content-type header', async () => {
+      const mockResponse = {
+        ok: true,
+        headers: new Headers(),
+        json: jest.fn().mockResolvedValue({ data: 'test' })
+      };
+
+      const result = await client.parseResponse(mockResponse as any);
+      expect(result).toEqual({ data: 'test' });
+    });
+  });
+});`,
+			description: 'Tests for API client response parsing with content-type validation',
+			framework: 'jest',
+			included_in_pr: true,
+			commit_sha: 'ghi789jkl',
+			created_at: '2024-01-22T09:04:00Z'
+		},
+		{
+			id: 'test-8b',
+			incident_id: 'inc-8',
+			file_path: 'src/api/__tests__/client.integration.test.ts',
+			content: `import { ApiClient } from '../client';
+import nock from 'nock';
+
+describe('ApiClient Integration', () => {
+  let client: ApiClient;
+  const baseUrl = 'https://api.example.com';
+
+  beforeEach(() => {
+    client = new ApiClient(baseUrl);
+    nock.cleanAll();
+  });
+
+  afterAll(() => {
+    nock.restore();
+  });
+
+  it('should handle 502 Bad Gateway with HTML response gracefully', async () => {
+    nock(baseUrl)
+      .get('/users')
+      .reply(502, '<!DOCTYPE html><html><body>Bad Gateway</body></html>', {
+        'Content-Type': 'text/html'
+      });
+
+    await expect(client.fetch('/users')).rejects.toMatchObject({
+      message: expect.stringContaining('non-JSON response'),
+      statusCode: 502
+    });
+  });
+
+  it('should succeed with valid JSON response', async () => {
+    nock(baseUrl)
+      .get('/users')
+      .reply(200, { users: [] }, {
+        'Content-Type': 'application/json'
+      });
+
+    const result = await client.fetch('/users');
+    expect(result).toEqual({ users: [] });
+  });
+});`,
+			description: 'Integration tests for API client error handling',
+			framework: 'jest',
+			included_in_pr: false,
+			created_at: '2024-01-22T09:04:30Z'
+		}
+	]
+};
+
+// Get mock generated tests for an incident
+export function getMockGeneratedTests(incidentId: string): GeneratedTest[] {
+	return mockGeneratedTests[incidentId] || [];
 }
 
 // Usage details for charts

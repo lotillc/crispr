@@ -181,7 +181,8 @@ impl Worker {
             SELECT id, project_id, fingerprint, title, state, severity,
                    occurrence_count, first_seen, last_seen, cooldown_until,
                    sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                   tests_generated, test_count, created_at, updated_at
+                   tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                   created_at, updated_at
             FROM incidents
             WHERE state = 'detected'
             AND (cooldown_until IS NULL OR cooldown_until < NOW())
@@ -329,23 +330,99 @@ impl Worker {
         let sample_bytes = self.state.storage.get(sample_location).await?;
         let sample: serde_json::Value = serde_json::from_slice(&sample_bytes)?;
 
+        // === PATTERN MATCHING (Pre-triage) ===
+        // Try to match against known patterns first to avoid LLM calls
+        let pattern_matches = self.state.patterns.match_sample(&sample).await;
+
+        // Record all pattern matches for analytics
+        for pattern_match in &pattern_matches {
+            if let Err(e) = self.state.patterns.record_match(pattern_match, incident.id).await {
+                warn!(error = %e, "Failed to record pattern match");
+            }
+        }
+
+        // Try auto-triage with pattern matching
+        let auto_triage_result = self.state.patterns.auto_triage(&sample).await;
+
         // === TRIAGE ===
         set_state(&self.state, incident.id, "triaging").await?;
-        log_activity(
-            &self.state.db,
-            incident.id,
-            Some(project.id),
-            "triaging",
-            &serde_json::json!({ "worker_id": self.worker_id }),
-        )
-        .await?;
 
-        // Include CRISPR.md context in triage
-        let triage_timer = StageTimer::start("triage");
-        let triage_result =
-            triage::run_with_context(&reader, &sample, incident.id, project.id, &crispr_context)
+        // Determine if we should use auto-triage or LLM triage
+        let triage_result = if let Some(auto_result) = auto_triage_result {
+            // Use pattern-based auto-triage
+            info!(
+                incident_id = %incident.id,
+                pattern = ?auto_result.matched_pattern.as_ref().map(|p| &p.pattern_name),
+                category = %auto_result.category,
+                "Using pattern-based auto-triage (skipping LLM)"
+            );
+
+            // Update incident with pattern info
+            if let Some(ref pattern_match) = auto_result.matched_pattern {
+                if let Err(e) = self.state.patterns
+                    .update_incident_pattern(incident.id, pattern_match, true)
+                    .await
+                {
+                    warn!(error = %e, "Failed to update incident pattern info");
+                }
+            }
+
+            log_activity(
+                &self.state.db,
+                incident.id,
+                Some(project.id),
+                "pattern_auto_triaged",
+                &serde_json::json!({
+                    "worker_id": self.worker_id,
+                    "pattern_name": auto_result.matched_pattern.as_ref().map(|p| &p.pattern_name),
+                    "category": auto_result.category,
+                    "fixable": auto_result.fixable,
+                }),
+            )
+            .await?;
+
+            // Convert AutoTriageResult to TriageResult
+            triage::TriageResult {
+                fixable: auto_result.fixable,
+                confidence: auto_result.confidence,
+                reason: auto_result.reason,
+                category: auto_result.category,
+                suggested_files: auto_result.suggested_files,
+                description: auto_result.description,
+                fix_approach: auto_result.fix_approach,
+            }
+        } else {
+            // Fall back to LLM-based triage
+            log_activity(
+                &self.state.db,
+                incident.id,
+                Some(project.id),
+                "triaging",
+                &serde_json::json!({
+                    "worker_id": self.worker_id,
+                    "pattern_matches": pattern_matches.len(),
+                }),
+            )
+            .await?;
+
+            // Include CRISPR.md context in triage
+            let triage_timer = StageTimer::start("triage");
+            let result = triage::run_with_context(&reader, &sample, incident.id, project.id, &crispr_context)
                 .await?;
-        triage_timer.stop();
+            triage_timer.stop();
+
+            // If patterns matched but didn't auto-triage, update incident with best match
+            if let Some(best_match) = pattern_matches.first() {
+                if let Err(e) = self.state.patterns
+                    .update_incident_pattern(incident.id, best_match, false)
+                    .await
+                {
+                    warn!(error = %e, "Failed to update incident pattern info");
+                }
+            }
+
+            result
+        };
 
         if !triage_result.fixable {
             info!(
@@ -425,6 +502,47 @@ impl Worker {
         let generated_fix = fix::generate(&writer, &context, incident.id, project.id).await?;
         fix_timer.stop();
 
+        // Store generated tests in the database
+        if generated_fix.has_tests() {
+            for test in &generated_fix.generated_tests {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO generated_tests (id, incident_id, file_path, content, description, framework, included_in_pr)
+                    VALUES ($1, $2, $3, $4, $5, $6, true)
+                    "#,
+                    Uuid::new_v4(),
+                    incident.id,
+                    test.path,
+                    test.content,
+                    test.description,
+                    test.framework,
+                )
+                .execute(&self.state.db)
+                .await?;
+            }
+
+            // Update incident test_count and tests_generated
+            sqlx::query!(
+                r#"
+                UPDATE incidents
+                SET tests_generated = true,
+                    test_count = $1,
+                    updated_at = NOW()
+                WHERE id = $2
+                "#,
+                generated_fix.test_count() as i32,
+                incident.id
+            )
+            .execute(&self.state.db)
+            .await?;
+
+            info!(
+                incident_id = %incident.id,
+                test_count = generated_fix.test_count(),
+                "Stored generated tests in database"
+            );
+        }
+
         // Log fix details including multi-file information
         if generated_fix.is_multi_file() {
             info!(
@@ -462,7 +580,7 @@ impl Worker {
         )
         .await?;
 
-        // Create PR using local repo
+        // Create PR using local repo (include all tests by default)
         let pr_timer = StageTimer::start("pr");
         let pr_result = pr::create_from_local(
             &self.state.github,
@@ -472,6 +590,7 @@ impl Worker {
             incident,
             &generated_fix,
             &self.state.config.safety.pr_branch_prefix,
+            None, // Include all tests by default
         )
         .await?;
         pr_timer.stop();

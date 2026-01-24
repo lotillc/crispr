@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
-	import { projects, incidents } from '$lib/stores';
+	import { projects, incidents, demoMode } from '$lib/stores';
 	import * as api from '$lib/api';
-	import type { Project, Incident, Sample, ActivityLog } from '$lib/api';
+	import type { Project, Incident, Sample, ActivityLog, GeneratedTest } from '$lib/api';
 	import Breadcrumb from '$lib/components/Breadcrumb.svelte';
+	import GeneratedTests from '$lib/components/GeneratedTests.svelte';
+	import { getMockGeneratedTests } from '$lib/mockData';
 
 	let projectId = $derived($page.params.id);
 	let incidentIdFromUrl = $derived($page.url.searchParams.get('incident'));
@@ -16,6 +18,9 @@
 	let loadingIncident = $state(false);
 	let actionLoading = $state(false);
 	let hasAutoSelected = $state(false);
+	let generatedTests = $state<GeneratedTest[]>([]);
+	let loadingTests = $state(false);
+	let togglingTest = $state(false);
 
 	onMount(async () => {
 		if (projectId) {
@@ -40,12 +45,54 @@
 
 	async function selectIncident(incident: Incident) {
 		loadingIncident = true;
+		loadingTests = true;
+		generatedTests = [];
 		try {
 			selectedIncident = await incidents.get(incident.id);
+			// Load generated tests for this incident
+			await loadGeneratedTests(incident.id);
 		} catch (e) {
 			console.error('Failed to load incident:', e);
 		} finally {
 			loadingIncident = false;
+		}
+	}
+
+	async function loadGeneratedTests(incidentId: string) {
+		loadingTests = true;
+		try {
+			if ($demoMode) {
+				generatedTests = getMockGeneratedTests(incidentId);
+			} else {
+				generatedTests = await api.getGeneratedTests(incidentId);
+			}
+		} catch (e) {
+			console.error('Failed to load generated tests:', e);
+			generatedTests = [];
+		} finally {
+			loadingTests = false;
+		}
+	}
+
+	async function handleToggleTestInclude(testId: string, included: boolean) {
+		if (!selectedIncident) return;
+		togglingTest = true;
+		try {
+			if ($demoMode) {
+				// In demo mode, just update local state
+				generatedTests = generatedTests.map(t =>
+					t.id === testId ? { ...t, included_in_pr: included } : t
+				);
+			} else {
+				const updated = await api.updateGeneratedTest(selectedIncident.id, testId, { included_in_pr: included });
+				generatedTests = generatedTests.map(t =>
+					t.id === testId ? updated : t
+				);
+			}
+		} catch (e) {
+			console.error('Failed to update test:', e);
+		} finally {
+			togglingTest = false;
 		}
 	}
 
@@ -302,6 +349,14 @@
 							</div>
 						</section>
 					{/if}
+
+					<!-- Generated Tests -->
+					<GeneratedTests
+						tests={generatedTests}
+						loading={loadingTests}
+						toggling={togglingTest}
+						onToggleInclude={handleToggleTestInclude}
+					/>
 
 					<!-- Sample -->
 					{#if selectedIncident.samples.length > 0}

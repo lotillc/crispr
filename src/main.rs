@@ -7,6 +7,7 @@ mod config;
 mod crypto;
 mod error;
 mod integrations;
+mod patterns;
 mod pipeline;
 mod store;
 mod worker;
@@ -47,6 +48,10 @@ async fn main() -> Result<()> {
     let events = api::EventBroadcaster::default();
     info!("Event broadcaster initialized");
 
+    // Initialize pattern matcher
+    let patterns = Arc::new(patterns::PatternMatcher::new(db.clone()).await?);
+    info!("Pattern matcher initialized");
+
     // Build application state
     let state = api::AppState {
         config: config.clone(),
@@ -56,6 +61,7 @@ async fn main() -> Result<()> {
         slack,
         llm,
         events,
+        patterns,
     };
 
     // Start background worker
@@ -64,11 +70,11 @@ async fn main() -> Result<()> {
         worker::run(worker_state).await;
     });
 
-    // Start gRPC server (OTLP) in background
+    // Start gRPC server (OTLP LogsService) in background
     let grpc_state = state.clone();
     let grpc_addr = format!("{}:{}", config.server.host, config.server.grpc_port);
     tokio::spawn(async move {
-        if let Err(e) = api::ingest::serve_grpc(grpc_state, &grpc_addr).await {
+        if let Err(e) = api::grpc::serve_grpc(grpc_state, &grpc_addr).await {
             tracing::error!(error = %e, "gRPC server error");
         }
     });

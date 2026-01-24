@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::AppState;
 use crate::error::{AppError, OptionExt};
-use crate::store::models::{ActivityLog, Incident, IncidentResponse};
+use crate::store::models::{ActivityLog, GeneratedTestRecord, GeneratedTestResponse, Incident, IncidentResponse};
 
 #[derive(Debug, Deserialize)]
 pub struct ListIncidentsQuery {
@@ -44,7 +44,8 @@ pub async fn list(
                 SELECT id, project_id, fingerprint, title, state, severity,
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                       tests_generated, test_count, created_at, updated_at
+                       tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                       created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1 AND state = $2
                 ORDER BY last_seen DESC
@@ -76,7 +77,8 @@ pub async fn list(
                 SELECT id, project_id, fingerprint, title, state, severity,
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                       tests_generated, test_count, created_at, updated_at
+                       tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                       created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1
                 ORDER BY last_seen DESC
@@ -106,7 +108,8 @@ pub async fn list(
                 SELECT id, project_id, fingerprint, title, state, severity,
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                       tests_generated, test_count, created_at, updated_at
+                       tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                       created_at, updated_at
                 FROM incidents
                 WHERE state = $1
                 ORDER BY last_seen DESC
@@ -136,7 +139,8 @@ pub async fn list(
                 SELECT id, project_id, fingerprint, title, state, severity,
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                       tests_generated, test_count, created_at, updated_at
+                       tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                       created_at, updated_at
                 FROM incidents
                 ORDER BY last_seen DESC
                 LIMIT $1 OFFSET $2
@@ -196,7 +200,8 @@ pub async fn get(
         SELECT id, project_id, fingerprint, title, state, severity,
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
-               tests_generated, test_count, created_at, updated_at
+               tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+               created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
         id
@@ -269,7 +274,8 @@ pub async fn retry(
         SELECT id, project_id, fingerprint, title, state, severity,
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
-               tests_generated, test_count, created_at, updated_at
+               tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+               created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
         id
@@ -301,7 +307,8 @@ pub async fn retry(
         RETURNING id, project_id, fingerprint, title, state, severity,
                   occurrence_count, first_seen, last_seen, cooldown_until,
                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                  tests_generated, test_count, created_at, updated_at
+                  tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                  created_at, updated_at
         "#,
         id
     )
@@ -335,7 +342,8 @@ pub async fn ignore(
         SELECT id, project_id, fingerprint, title, state, severity,
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
-               tests_generated, test_count, created_at, updated_at
+               tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+               created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
         id
@@ -354,7 +362,8 @@ pub async fn ignore(
         RETURNING id, project_id, fingerprint, title, state, severity,
                   occurrence_count, first_seen, last_seen, cooldown_until,
                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                  tests_generated, test_count, created_at, updated_at
+                  tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                  created_at, updated_at
         "#,
         id
     )
@@ -382,6 +391,8 @@ pub struct IncidentStats {
     pub total: i64,
     pub by_state: Vec<StateCount>,
     pub recent_activity: i64,
+    /// Number of incidents that were auto-triaged via pattern matching
+    pub auto_triaged: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -421,9 +432,166 @@ pub async fn stats(State(state): State<AppState>) -> Result<Json<IncidentStats>,
     .await?
     .unwrap_or(0);
 
+    let auto_triaged: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM incidents WHERE pattern_auto_triaged = true"
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+
     Ok(Json(IncidentStats {
         total,
         by_state,
         recent_activity,
+        auto_triaged,
     }))
+}
+
+// ============================================================================
+// Generated Tests API
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct GeneratedTestsListResponse {
+    pub tests: Vec<GeneratedTestResponse>,
+    pub total: i64,
+}
+
+/// GET /api/v1/incidents/:id/tests - List generated tests for an incident
+pub async fn list_tests(
+    State(state): State<AppState>,
+    Path(incident_id): Path<Uuid>,
+) -> Result<Json<GeneratedTestsListResponse>, AppError> {
+    // Verify incident exists
+    let _incident = sqlx::query_scalar!(
+        "SELECT id FROM incidents WHERE id = $1",
+        incident_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Incident not found")?;
+
+    // Fetch all generated tests for this incident
+    let tests = sqlx::query_as!(
+        GeneratedTestRecord,
+        r#"
+        SELECT id, incident_id, file_path, content, description, framework,
+               included_in_pr, commit_sha, created_at
+        FROM generated_tests
+        WHERE incident_id = $1
+        ORDER BY created_at DESC
+        "#,
+        incident_id
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let total = tests.len() as i64;
+    let responses: Vec<GeneratedTestResponse> = tests.into_iter().map(GeneratedTestResponse::from).collect();
+
+    Ok(Json(GeneratedTestsListResponse {
+        tests: responses,
+        total,
+    }))
+}
+
+/// Path parameters for test-specific endpoints
+#[derive(Debug, Deserialize)]
+pub struct TestPath {
+    pub id: Uuid,
+    pub test_id: Uuid,
+}
+
+/// Request body for updating a generated test
+#[derive(Debug, Deserialize)]
+pub struct UpdateTestRequest {
+    /// Whether to include this test in the PR
+    pub included_in_pr: Option<bool>,
+}
+
+/// PATCH /api/v1/incidents/:id/tests/:test_id - Update a generated test
+pub async fn update_test(
+    State(state): State<AppState>,
+    Path(path): Path<TestPath>,
+    Json(body): Json<UpdateTestRequest>,
+) -> Result<Json<GeneratedTestResponse>, AppError> {
+    // Verify incident exists
+    let _incident = sqlx::query_scalar!(
+        "SELECT id FROM incidents WHERE id = $1",
+        path.id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Incident not found")?;
+
+    // Verify test exists and belongs to this incident
+    let test = sqlx::query_as!(
+        GeneratedTestRecord,
+        r#"
+        SELECT id, incident_id, file_path, content, description, framework,
+               included_in_pr, commit_sha, created_at
+        FROM generated_tests
+        WHERE id = $1 AND incident_id = $2
+        "#,
+        path.test_id,
+        path.id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Generated test not found")?;
+
+    // Update the test if included_in_pr is provided
+    let updated_test = if let Some(included) = body.included_in_pr {
+        sqlx::query_as!(
+            GeneratedTestRecord,
+            r#"
+            UPDATE generated_tests
+            SET included_in_pr = $1
+            WHERE id = $2
+            RETURNING id, incident_id, file_path, content, description, framework,
+                      included_in_pr, commit_sha, created_at
+            "#,
+            included,
+            path.test_id
+        )
+        .fetch_one(&state.db)
+        .await?
+    } else {
+        test
+    };
+
+    Ok(Json(GeneratedTestResponse::from(updated_test)))
+}
+
+/// GET /api/v1/incidents/:id/tests/:test_id - Get a single generated test
+pub async fn get_test(
+    State(state): State<AppState>,
+    Path(path): Path<TestPath>,
+) -> Result<Json<GeneratedTestResponse>, AppError> {
+    // Verify incident exists
+    let _incident = sqlx::query_scalar!(
+        "SELECT id FROM incidents WHERE id = $1",
+        path.id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Incident not found")?;
+
+    // Fetch the test
+    let test = sqlx::query_as!(
+        GeneratedTestRecord,
+        r#"
+        SELECT id, incident_id, file_path, content, description, framework,
+               included_in_pr, commit_sha, created_at
+        FROM generated_tests
+        WHERE id = $1 AND incident_id = $2
+        "#,
+        path.test_id,
+        path.id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Generated test not found")?;
+
+    Ok(Json(GeneratedTestResponse::from(test)))
 }

@@ -294,27 +294,6 @@ fn truncate_title(msg: &str) -> String {
     }
 }
 
-/// Start the gRPC server for OTLP log ingestion
-/// For Phase 2, this is a placeholder - HTTP ingest is the primary method
-pub async fn serve_grpc(state: AppState, addr: &str) -> Result<(), anyhow::Error> {
-    use std::net::SocketAddr;
-
-    let addr: SocketAddr = addr.parse()?;
-
-    info!(addr = %addr, "gRPC server starting (OTLP placeholder)");
-
-    // For now, we provide HTTP ingest which is simpler and works well
-    // Full OTLP gRPC support can be added in a future iteration by:
-    // 1. Adding opentelemetry-proto crate
-    // 2. Implementing the LogsService trait
-    // 3. Converting OTLP LogRecord to our IngestPayload format
-
-    // Keep the task alive
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -496,7 +496,7 @@
 								placeholder={$llmConfig?.reader_provider === readerProvider ? '••••••••' : 'Enter API key'}
 								class="field-input"
 								class:field-invalid={shouldShowError(readerTouched.apiKey, readerApiKeyValidation) && readerApiKeyRequired}
-								aria-invalid={shouldShowError(readerTouched.apiKey, readerApiKeyValidation) && readerApiKeyRequired}
+								aria-invalid={shouldShowError(readerTouched.apiKey, readerApiKeyValidation) && readerApiKeyRequired ? true : undefined}
 								aria-describedby={shouldShowError(readerTouched.apiKey, readerApiKeyValidation) && readerApiKeyRequired ? 'reader-apikey-error' : undefined}
 								onblur={() => readerTouched.apiKey = true}
 							/>
@@ -643,7 +643,7 @@
 								placeholder={$llmConfig?.writer_provider === writerProvider ? '••••••••' : 'Enter API key'}
 								class="field-input"
 								class:field-invalid={shouldShowError(writerTouched.apiKey, writerApiKeyValidation) && writerApiKeyRequired}
-								aria-invalid={shouldShowError(writerTouched.apiKey, writerApiKeyValidation) && writerApiKeyRequired}
+								aria-invalid={shouldShowError(writerTouched.apiKey, writerApiKeyValidation) && writerApiKeyRequired ? true : undefined}
 								aria-describedby={shouldShowError(writerTouched.apiKey, writerApiKeyValidation) && writerApiKeyRequired ? 'writer-apikey-error' : undefined}
 								onblur={() => writerTouched.apiKey = true}
 							/>

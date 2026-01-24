@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::integrations::{github::GitHubClient, llm::LlmManager, slack::SlackClient};
+use crate::patterns::PatternMatcher;
 use crate::store::{object::SampleStore, DbPool};
 
 pub mod auth;
@@ -10,6 +11,7 @@ pub mod grpc;
 pub mod incidents;
 pub mod ingest;
 pub mod metrics;
+pub mod patterns;
 pub mod projects;
 pub mod rate_limit;
 pub mod router;
@@ -29,4 +31,5 @@ pub struct AppState {
     pub slack: Arc<SlackClient>,
     pub llm: Arc<LlmManager>,
     pub events: EventBroadcaster,
+    pub patterns: Arc<PatternMatcher>,
 }

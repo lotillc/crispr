@@ -7,7 +7,7 @@ use axum::{
 use rust_embed::RustEmbed;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use super::{auth, events, incidents, ingest, metrics, projects, rate_limit, settings, webhooks, AppState};
+use super::{auth, events, incidents, ingest, metrics, patterns, projects, rate_limit, settings, webhooks, AppState};
 
 #[derive(RustEmbed)]
 #[folder = "ui/build"]
@@ -66,6 +66,27 @@ pub fn build(state: AppState) -> Router {
         .route("/api/v1/incidents/:id", get(incidents::get))
         .route("/api/v1/incidents/:id/retry", post(incidents::retry))
         .route("/api/v1/incidents/:id/ignore", post(incidents::ignore))
+        // Generated tests endpoints
+        .route("/api/v1/incidents/:id/tests", get(incidents::list_tests))
+        .route(
+            "/api/v1/incidents/:id/tests/:test_id",
+            get(incidents::get_test).patch(incidents::update_test),
+        )
+        // Pattern matches for incidents
+        .route("/api/v1/incidents/:id/pattern-matches", get(patterns::incident_matches))
+        // Patterns endpoints
+        .route("/api/v1/patterns", get(patterns::list).post(patterns::create))
+        .route("/api/v1/patterns/summary", get(patterns::summary))
+        .route("/api/v1/patterns/categories", get(patterns::list_categories))
+        .route("/api/v1/patterns/test", post(patterns::test_pattern))
+        .route("/api/v1/patterns/reload", post(patterns::reload))
+        .route(
+            "/api/v1/patterns/:id",
+            get(patterns::get)
+                .patch(patterns::update)
+                .delete(patterns::delete),
+        )
+        .route("/api/v1/patterns/:id/stats", get(patterns::stats))
         // SSE events endpoint
         .route("/api/v1/events", get(events::handler))
         // Settings endpoints

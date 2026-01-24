@@ -145,6 +145,18 @@ export interface IncidentStats {
 	avg_fix_time_hours?: number;
 }
 
+export interface GeneratedTest {
+	id: string;
+	incident_id: string;
+	file_path: string;
+	content: string;
+	description?: string;
+	framework: string;
+	included_in_pr: boolean;
+	commit_sha?: string;
+	created_at: string;
+}
+
 export interface ProjectStats {
 	incident_count: number;
 	open_incidents: number;
@@ -284,6 +296,22 @@ export async function ignoreIncident(id: string): Promise<void> {
 
 export async function getIncidentStats(): Promise<IncidentStats> {
 	return request('/api/v1/incidents/stats');
+}
+
+// Generated Tests
+export async function getGeneratedTests(incidentId: string): Promise<GeneratedTest[]> {
+	return request(`/api/v1/incidents/${incidentId}/tests`);
+}
+
+export async function updateGeneratedTest(
+	incidentId: string,
+	testId: string,
+	updates: { included_in_pr?: boolean }
+): Promise<GeneratedTest> {
+	return request(`/api/v1/incidents/${incidentId}/tests/${testId}`, {
+		method: 'PATCH',
+		body: JSON.stringify(updates),
+	});
 }
 
 // LLM Settings

@@ -80,6 +80,10 @@ pub struct Incident {
     pub tests_generated: Option<bool>,
     /// Number of tests generated
     pub test_count: Option<i32>,
+    /// ID of the matched error pattern (if any)
+    pub matched_pattern_id: Option<Uuid>,
+    /// Whether this incident was auto-triaged via pattern matching
+    pub pattern_auto_triaged: Option<bool>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -272,6 +276,10 @@ pub struct IncidentResponse {
     pub tests_generated: bool,
     /// Number of tests generated
     pub test_count: i32,
+    /// ID of the matched error pattern (if any)
+    pub matched_pattern_id: Option<Uuid>,
+    /// Whether this incident was auto-triaged via pattern matching
+    pub pattern_auto_triaged: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -295,6 +303,8 @@ impl From<Incident> for IncidentResponse {
             pr_state: i.pr_state,
             tests_generated: i.tests_generated.unwrap_or(false),
             test_count: i.test_count.unwrap_or(0),
+            matched_pattern_id: i.matched_pattern_id,
+            pattern_auto_triaged: i.pattern_auto_triaged.unwrap_or(false),
             created_at: i.created_at.unwrap_or_else(Utc::now),
             updated_at: i.updated_at.unwrap_or_else(Utc::now),
         }

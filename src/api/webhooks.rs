@@ -5,12 +5,15 @@
 //! - Datadog: Event and error webhooks
 
 use axum::{
+    body::Bytes,
     extract::State,
     http::HeaderMap,
     Json,
 };
 use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use tracing::{info, warn};
 
 use super::ingest::IngestPayload;
@@ -225,23 +228,32 @@ pub struct WebhookResponse {
 pub async fn sentry_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(payload): Json<SentryWebhookPayload>,
+    body: Bytes,
 ) -> Result<Json<WebhookResponse>, AppError> {
+    // Verify the webhook signature if a secret is configured
+    if let Some(secret) = &state.config.webhooks.as_ref().and_then(|w| w.sentry_secret.as_ref()) {
+        let signature = headers
+            .get("sentry-hook-signature")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| {
+                warn!("Missing Sentry webhook signature header");
+                AppError::Unauthorized("Missing webhook signature".into())
+            })?;
+
+        if !verify_sentry_signature(&body, signature, secret) {
+            warn!("Invalid Sentry webhook signature");
+            return Err(AppError::Unauthorized("Invalid webhook signature".into()));
+        }
+    }
+
+    // Parse the JSON payload after signature verification
+    let payload: SentryWebhookPayload = serde_json::from_slice(&body)
+        .map_err(|e| AppError::BadRequest(format!("Invalid JSON payload: {}", e)))?;
+
     info!(
         action = %payload.action,
         "Received Sentry webhook"
     );
-
-    // Verify the webhook signature if configured
-    if let Some(expected_secret) = &state.config.webhooks.as_ref().and_then(|w| w.sentry_secret.as_ref()) {
-        if let Some(signature) = headers.get("sentry-hook-signature") {
-            let sig_str = signature.to_str().unwrap_or("");
-            if !verify_sentry_signature(sig_str, expected_secret) {
-                warn!("Invalid Sentry webhook signature");
-                return Err(AppError::Unauthorized("Invalid webhook signature".into()));
-            }
-        }
-    }
 
     let mut incidents_created = 0;
     let mut incidents_updated = 0;
@@ -459,11 +471,35 @@ fn sentry_event_to_ingest(
     }))
 }
 
-/// Verify Sentry webhook signature (placeholder - implement based on Sentry docs)
-fn verify_sentry_signature(_signature: &str, _secret: &str) -> bool {
-    // TODO: Implement actual signature verification
-    // Sentry uses HMAC-SHA256 for webhook signatures
-    true
+/// Verify Sentry webhook signature using HMAC-SHA256.
+///
+/// Sentry sends the signature in the `Sentry-Hook-Signature` header.
+/// The signature is computed as HMAC-SHA256(client_secret, request_body)
+/// and sent as a hex-encoded string.
+fn verify_sentry_signature(body: &[u8], signature: &str, secret: &str) -> bool {
+    // Create HMAC-SHA256 instance with the secret
+    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+        Ok(mac) => mac,
+        Err(_) => {
+            warn!("Failed to create HMAC instance - invalid key length");
+            return false;
+        }
+    };
+
+    // Update with the request body
+    mac.update(body);
+
+    // Decode the expected signature from hex
+    let expected_bytes = match hex::decode(signature) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            warn!("Failed to decode signature as hex");
+            return false;
+        }
+    };
+
+    // Verify using constant-time comparison to prevent timing attacks
+    mac.verify_slice(&expected_bytes).is_ok()
 }
 
 // ============================================================================
@@ -817,5 +853,73 @@ mod tests {
         assert_eq!(ingest.message, "High error rate on API");
         assert_eq!(ingest.project, Some("acme/api".to_string()));
         assert!(ingest.attributes.is_some());
+    }
+
+    #[test]
+    fn test_verify_sentry_signature_valid() {
+        // Test with a known HMAC-SHA256 value
+        let secret = "test-secret-key";
+        let body = b"test webhook body";
+
+        // Compute expected signature: HMAC-SHA256(secret, body)
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body);
+        let expected_signature = hex::encode(mac.finalize().into_bytes());
+
+        assert!(verify_sentry_signature(body, &expected_signature, secret));
+    }
+
+    #[test]
+    fn test_verify_sentry_signature_invalid() {
+        let secret = "test-secret-key";
+        let body = b"test webhook body";
+        let wrong_signature = "0000000000000000000000000000000000000000000000000000000000000000";
+
+        assert!(!verify_sentry_signature(body, wrong_signature, secret));
+    }
+
+    #[test]
+    fn test_verify_sentry_signature_wrong_secret() {
+        let secret = "correct-secret";
+        let wrong_secret = "wrong-secret";
+        let body = b"test webhook body";
+
+        // Compute signature with correct secret
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body);
+        let signature = hex::encode(mac.finalize().into_bytes());
+
+        // Verify with wrong secret should fail
+        assert!(!verify_sentry_signature(body, &signature, wrong_secret));
+    }
+
+    #[test]
+    fn test_verify_sentry_signature_invalid_hex() {
+        let secret = "test-secret-key";
+        let body = b"test webhook body";
+        let invalid_hex = "not-valid-hex-string";
+
+        assert!(!verify_sentry_signature(body, invalid_hex, secret));
+    }
+
+    #[test]
+    fn test_verify_sentry_signature_tampered_body() {
+        let secret = "test-secret-key";
+        let body = b"original body";
+        let tampered_body = b"tampered body";
+
+        // Compute signature for original body
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body);
+        let signature = hex::encode(mac.finalize().into_bytes());
+
+        // Verify with tampered body should fail
+        assert!(!verify_sentry_signature(tampered_body, &signature, secret));
     }
 }

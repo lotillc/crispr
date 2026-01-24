@@ -14,3 +14,6 @@ export { default as Breadcrumb } from './Breadcrumb.svelte';
 
 // Feedback Components
 export { default as Toast } from './Toast.svelte';
+
+// Content Components
+export { default as GeneratedTests } from './GeneratedTests.svelte';
