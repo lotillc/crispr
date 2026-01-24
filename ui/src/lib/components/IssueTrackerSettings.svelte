@@ -12,7 +12,7 @@
 		type JiraConnectionStatus,
 		type LinearConnectionStatus
 	} from '$lib/api';
-	import { auth } from '$lib/stores';
+	import { auth, demoMode } from '$lib/stores';
 
 	interface Props {
 		projectId: string;
@@ -26,6 +26,21 @@
 	let loading = true;
 	let error = '';
 	let success = '';
+
+	// Mock data for demo mode
+	const mockTrackers: IssueTrackerConfig[] = [
+		{
+			id: 'mock-github-tracker',
+			project_id: projectId,
+			provider: 'github',
+			enabled: true,
+			github_labels: ['bug', 'crispr'],
+			github_assignees: [],
+			created_at: new Date().toISOString()
+		}
+	];
+	const mockJiraStatus: JiraConnectionStatus = { connected: false };
+	const mockLinearStatus: LinearConnectionStatus = { connected: false };
 
 	// Determine available tabs based on global connections
 	let availableTabs = $derived.by(() => {
@@ -94,20 +109,27 @@
 		loading = true;
 		error = '';
 		try {
-			const [trackersData, jiraData, linearData] = await Promise.all([
-				getProjectIssueTrackers(projectId),
-				getJiraStatus(),
-				getLinearStatus()
-			]);
+			if ($demoMode) {
+				// Use mock data in demo mode
+				trackers = mockTrackers;
+				jiraStatus = mockJiraStatus;
+				linearStatus = mockLinearStatus;
+			} else {
+				const [trackersData, jiraData, linearData] = await Promise.all([
+					getProjectIssueTrackers(projectId),
+					getJiraStatus(),
+					getLinearStatus()
+				]);
 
-			trackers = trackersData;
-			jiraStatus = jiraData;
-			linearStatus = linearData;
+				trackers = trackersData;
+				jiraStatus = jiraData;
+				linearStatus = linearData;
+			}
 
 			// Set default tab to first configured external tracker, or github
-			if (jiraData?.connected) {
+			if (jiraStatus?.connected) {
 				activeTab = 'jira';
-			} else if (linearData?.connected) {
+			} else if (linearStatus?.connected) {
 				activeTab = 'linear';
 			} else {
 				activeTab = 'github';
@@ -151,6 +173,10 @@
 		error = '';
 		success = '';
 		try {
+			if ($demoMode) {
+				success = 'GitHub Issues settings saved (demo mode)';
+				return;
+			}
 			await upsertProjectIssueTracker(projectId, 'github', {
 				provider: 'github',
 				enabled: githubEnabled,
@@ -174,6 +200,10 @@
 		error = '';
 		success = '';
 		try {
+			if ($demoMode) {
+				success = 'Jira settings saved (demo mode)';
+				return;
+			}
 			await upsertProjectIssueTracker(projectId, 'jira', {
 				provider: 'jira',
 				enabled: jiraEnabled,
@@ -191,6 +221,10 @@
 		error = '';
 		success = '';
 		try {
+			if ($demoMode) {
+				success = 'Linear settings saved (demo mode)';
+				return;
+			}
 			await upsertProjectIssueTracker(projectId, 'linear', {
 				provider: 'linear',
 				enabled: linearEnabled,
@@ -207,6 +241,10 @@
 		error = '';
 		success = '';
 		try {
+			if ($demoMode) {
+				success = 'Webhook settings saved (demo mode)';
+				return;
+			}
 			const headers: Record<string, string> = {};
 			if (webhookAuthHeader) {
 				headers['Authorization'] = webhookAuthHeader;
@@ -231,6 +269,10 @@
 
 	async function handleTestWebhook() {
 		webhookTestResult = null;
+		if ($demoMode) {
+			webhookTestResult = { success: true, message: 'Success (HTTP 200) - demo mode' };
+			return;
+		}
 		try {
 			const headers: Record<string, string> = {};
 			if (webhookAuthHeader) {
@@ -257,6 +299,10 @@
 
 		error = '';
 		try {
+			if ($demoMode) {
+				success = `${provider} integration removed (demo mode)`;
+				return;
+			}
 			await deleteProjectIssueTracker(projectId, provider);
 			success = `${provider} integration removed`;
 			await loadData();

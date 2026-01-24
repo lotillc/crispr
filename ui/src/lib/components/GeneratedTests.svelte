@@ -360,11 +360,12 @@
 	.test-code {
 		margin: 0;
 		padding: var(--space-lg);
-		background: var(--obsidian);
+		background: #1a1f2e;
+		border: 1px solid #2d3548;
 		font-family: 'SF Mono', 'Fira Code', monospace;
 		font-size: 0.8125rem;
 		line-height: 1.6;
-		color: var(--silver);
+		color: #e2e8f0;
 		overflow-x: auto;
 		white-space: pre;
 		tab-size: 2;

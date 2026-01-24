@@ -138,11 +138,13 @@
 	let disconnectingLinear = $state(false);
 
 	// Jira form
+	let jiraExpanded = $state(false);
 	let jiraSiteUrl = $state('');
 	let jiraEmail = $state('');
 	let jiraApiToken = $state('');
 
 	// Linear form
+	let linearExpanded = $state(false);
 	let linearApiKey = $state('');
 
 	// Token visibility state
@@ -832,52 +834,57 @@
 	<!-- Issue Tracker Integrations -->
 	<section class="settings-section">
 		<h2>Issue Tracker Integrations</h2>
-		<p class="section-desc">Connect issue trackers to sync incident state to external systems. Once connected, enable per-project in each service's settings.</p>
+		<p class="section-desc">Connect issue trackers to sync incident state to external systems</p>
 
-		<div class="connection-grid">
+		<div class="webhook-grid">
 			<!-- Jira -->
-			<div class="connection-card" class:expanded={!jiraStatus?.connected}>
-				<div class="connection-main">
-					<div class="connection-icon jira">
+			<div class="webhook-card">
+				<div class="webhook-header">
+					<div class="webhook-icon jira">
 						<svg viewBox="0 0 24 24" fill="currentColor">
 							<path d="M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.004-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.212 5.214h2.13v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.212 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.005 1.005 0 0 0 23.013 0z"/>
 						</svg>
 					</div>
-					<div class="connection-info">
+					<div class="webhook-info">
 						<h3>Jira</h3>
 						<p>Create and update Jira issues for incidents</p>
 					</div>
-					<div class="connection-status">
-						{#if loadingJira}
-							<span class="loading-text">Loading...</span>
-						{:else if jiraStatus?.connected}
-							<span class="status-badge connected">
-								<svg viewBox="0 0 20 20" fill="currentColor">
-									<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
-								</svg>
-								{jiraStatus.site_url}
-							</span>
-						{:else}
-							<span class="status-badge not-connected">Not Connected</span>
-						{/if}
-					</div>
+					{#if jiraStatus?.connected}
+						<span class="status-badge connected compact">
+							<svg viewBox="0 0 20 20" fill="currentColor">
+								<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+							</svg>
+							Connected
+						</span>
+					{:else}
+						<label class="toggle">
+							<input type="checkbox" bind:checked={jiraExpanded} />
+							<span class="toggle-slider"></span>
+						</label>
+					{/if}
 				</div>
-
 				{#if jiraStatus?.connected}
-					<div class="connection-config">
-						<div class="connected-info">
-							<span class="connected-detail">Connected as {jiraStatus.user_email || jiraStatus.connected_by}</span>
+					<div class="webhook-config">
+						<div class="connected-row">
+							<div class="connected-details">
+								<span class="connected-site">{jiraStatus.site_url}</span>
+								<span class="connected-user">{jiraStatus.user_email || jiraStatus.connected_by}</span>
+							</div>
+							<button
+								class="btn btn-ghost btn-sm disconnect"
+								onclick={handleDisconnectJira}
+								disabled={disconnectingJira}
+							>
+								{disconnectingJira ? 'Disconnecting...' : 'Disconnect'}
+							</button>
 						</div>
-						<button
-							class="btn btn-ghost disconnect"
-							onclick={handleDisconnectJira}
-							disabled={disconnectingJira}
-						>
-							{disconnectingJira ? 'Disconnecting...' : 'Disconnect'}
-						</button>
 					</div>
-				{:else}
-					<div class="connection-form">
+				{:else if jiraExpanded}
+					<div class="webhook-config">
+						<div class="webhook-instructions">
+							<h4>Connect Your Jira Account</h4>
+							<p>Enter your Atlassian credentials to enable Jira integration.</p>
+						</div>
 						<div class="field">
 							<label class="field-label" for="jira-site">Jira Site URL</label>
 							<input
@@ -911,60 +918,67 @@
 								Generate at <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">Atlassian API Tokens</a>
 							</span>
 						</div>
-						<button
-							class="btn btn-primary"
-							onclick={handleConnectJira}
-							disabled={connectingJira || !jiraSiteUrl || !jiraEmail || !jiraApiToken}
-						>
-							{connectingJira ? 'Connecting...' : 'Connect Jira'}
-						</button>
+						<div class="config-actions">
+							<button
+								class="btn btn-primary"
+								onclick={handleConnectJira}
+								disabled={connectingJira || !jiraSiteUrl || !jiraEmail || !jiraApiToken}
+							>
+								{connectingJira ? 'Connecting...' : 'Connect Jira'}
+							</button>
+						</div>
 					</div>
 				{/if}
 			</div>
 
 			<!-- Linear -->
-			<div class="connection-card" class:expanded={!linearStatus?.connected}>
-				<div class="connection-main">
-					<div class="connection-icon linear">
+			<div class="webhook-card">
+				<div class="webhook-header">
+					<div class="webhook-icon linear">
 						<svg viewBox="0 0 24 24" fill="currentColor">
 							<path d="M3.833 1.333c-.644 0-1.166.523-1.166 1.167v19c0 .644.522 1.167 1.166 1.167h16.334c.644 0 1.166-.523 1.166-1.167V2.5c0-.644-.522-1.167-1.166-1.167H3.833zm6.334 5.334a.833.833 0 1 0 0 1.666h7.5a.833.833 0 1 0 0-1.666h-7.5zm-3.334.833a.833.833 0 1 1 1.667 0 .833.833 0 0 1-1.667 0zm3.334 3.333a.833.833 0 1 0 0 1.667h7.5a.833.833 0 0 0 0-1.667h-7.5zm-3.334.834a.833.833 0 1 1 1.667 0 .833.833 0 0 1-1.667 0zm3.334 3.333a.833.833 0 0 0 0 1.667h7.5a.833.833 0 0 0 0-1.667h-7.5zm-3.334.833a.833.833 0 1 1 1.667 0 .833.833 0 0 1-1.667 0z"/>
 						</svg>
 					</div>
-					<div class="connection-info">
+					<div class="webhook-info">
 						<h3>Linear</h3>
 						<p>Create and update Linear issues for incidents</p>
 					</div>
-					<div class="connection-status">
-						{#if loadingLinear}
-							<span class="loading-text">Loading...</span>
-						{:else if linearStatus?.connected}
-							<span class="status-badge connected">
-								<svg viewBox="0 0 20 20" fill="currentColor">
-									<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
-								</svg>
-								{linearStatus.organization_name || 'Connected'}
-							</span>
-						{:else}
-							<span class="status-badge not-connected">Not Connected</span>
-						{/if}
-					</div>
+					{#if linearStatus?.connected}
+						<span class="status-badge connected compact">
+							<svg viewBox="0 0 20 20" fill="currentColor">
+								<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+							</svg>
+							Connected
+						</span>
+					{:else}
+						<label class="toggle">
+							<input type="checkbox" bind:checked={linearExpanded} />
+							<span class="toggle-slider"></span>
+						</label>
+					{/if}
 				</div>
-
 				{#if linearStatus?.connected}
-					<div class="connection-config">
-						<div class="connected-info">
-							<span class="connected-detail">Connected by {linearStatus.connected_by}</span>
+					<div class="webhook-config">
+						<div class="connected-row">
+							<div class="connected-details">
+								<span class="connected-site">{linearStatus.organization_name || 'Linear'}</span>
+								<span class="connected-user">{linearStatus.connected_by}</span>
+							</div>
+							<button
+								class="btn btn-ghost btn-sm disconnect"
+								onclick={handleDisconnectLinear}
+								disabled={disconnectingLinear}
+							>
+								{disconnectingLinear ? 'Disconnecting...' : 'Disconnect'}
+							</button>
 						</div>
-						<button
-							class="btn btn-ghost disconnect"
-							onclick={handleDisconnectLinear}
-							disabled={disconnectingLinear}
-						>
-							{disconnectingLinear ? 'Disconnecting...' : 'Disconnect'}
-						</button>
 					</div>
-				{:else}
-					<div class="connection-form">
+				{:else if linearExpanded}
+					<div class="webhook-config">
+						<div class="webhook-instructions">
+							<h4>Connect Your Linear Account</h4>
+							<p>Enter your Linear API key to enable Linear integration.</p>
+						</div>
 						<div class="field">
 							<label class="field-label" for="linear-token">API Key</label>
 							<input
@@ -978,20 +992,22 @@
 								Generate at <a href="https://linear.app/settings/api" target="_blank" rel="noopener">Linear API Settings</a>
 							</span>
 						</div>
-						<button
-							class="btn btn-primary"
-							onclick={handleConnectLinear}
-							disabled={connectingLinear || !linearApiKey}
-						>
-							{connectingLinear ? 'Connecting...' : 'Connect Linear'}
-						</button>
+						<div class="config-actions">
+							<button
+								class="btn btn-primary"
+								onclick={handleConnectLinear}
+								disabled={connectingLinear || !linearApiKey}
+							>
+								{connectingLinear ? 'Connecting...' : 'Connect Linear'}
+							</button>
+						</div>
 					</div>
 				{/if}
 			</div>
 		</div>
 
 		<div class="tracker-info">
-			<p><strong>Note:</strong> GitHub Issues are always available when GitHub is connected. Once Jira or Linear is connected here, you can enable them per-project in the service settings.</p>
+			<p><strong>Note:</strong> GitHub Issues are always available when GitHub is connected. Once connected here, enable Jira or Linear per-project in service settings.</p>
 		</div>
 	</section>
 
@@ -2136,56 +2152,49 @@
 	}
 
 	/* Issue Tracker Integrations */
-	.connection-icon.jira {
+	.webhook-icon.jira {
 		background: #0052CC;
 		color: white;
 	}
 
-	.connection-icon.linear {
+	.webhook-icon.linear {
 		background: #5E6AD2;
 		color: white;
 	}
 
-	.connection-card.expanded {
-		flex-direction: column;
+	.status-badge.compact {
+		padding: var(--space-xs) var(--space-sm);
+		font-size: 0.75rem;
 	}
 
-	.connection-form {
-		margin-top: var(--space-lg);
-		padding-top: var(--space-lg);
-		border-top: 1px solid var(--paper);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-	}
-
-	.connection-form .btn {
-		align-self: flex-start;
-	}
-
-	.connection-config {
-		margin-top: var(--space-md);
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--paper);
+	.connected-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		padding: var(--space-sm) 0;
 	}
 
-	.connected-info {
+	.connected-details {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: 2px;
 	}
 
-	.connected-detail {
-		font-size: 0.8125rem;
-		color: var(--graphite);
+	.connected-site {
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--charcoal);
 	}
 
-	.status-badge.not-connected {
-		background: var(--paper);
+	.connected-user {
+		font-size: 0.75rem;
 		color: var(--slate);
+	}
+
+	.config-actions {
+		display: flex;
+		gap: var(--space-sm);
+		margin-top: var(--space-sm);
 	}
 
 	.tracker-info {
@@ -2201,25 +2210,11 @@
 		margin: 0;
 	}
 
-	@media (max-width: 768px) {
-		.connection-form {
-			gap: var(--space-md);
-		}
+	.btn.disconnect {
+		color: var(--critical);
+	}
 
-		.connection-form .btn {
-			width: 100%;
-			min-height: 44px;
-		}
-
-		.connection-config {
-			flex-direction: column;
-			gap: var(--space-md);
-			align-items: flex-start;
-		}
-
-		.connection-config .btn {
-			width: 100%;
-			min-height: 44px;
-		}
+	.btn.disconnect:hover {
+		background: var(--critical-soft);
 	}
 </style>
