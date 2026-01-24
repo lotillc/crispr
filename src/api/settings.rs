@@ -417,3 +417,174 @@ pub async fn usage_details(
 
     Ok(Json(details))
 }
+
+// ============================================================================
+// Webhook Settings
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct WebhookSettingsResponse {
+    pub configured: bool,
+    pub sentry: WebhookProviderSettings,
+    pub datadog: WebhookProviderSettings,
+    pub grafana: WebhookProviderSettings,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WebhookProviderSettings {
+    pub enabled: bool,
+    pub has_secret: bool,
+}
+
+/// Row type for webhook settings queries (runtime checking)
+#[derive(sqlx::FromRow)]
+struct WebhookSettingsRow {
+    id: uuid::Uuid,
+    sentry_enabled: Option<bool>,
+    sentry_secret: Option<String>,
+    datadog_enabled: Option<bool>,
+    datadog_token: Option<String>,
+    grafana_enabled: Option<bool>,
+    grafana_token: Option<String>,
+}
+
+/// GET /api/v1/settings/webhooks - Get webhook settings
+pub async fn get_webhooks(State(state): State<AppState>) -> Result<Json<WebhookSettingsResponse>, AppError> {
+    let settings: Option<WebhookSettingsRow> = sqlx::query_as(
+        r#"
+        SELECT id, sentry_enabled, sentry_secret,
+               datadog_enabled, datadog_token,
+               grafana_enabled, grafana_token
+        FROM webhook_settings
+        LIMIT 1
+        "#
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    match settings {
+        Some(s) => Ok(Json(WebhookSettingsResponse {
+            configured: true,
+            sentry: WebhookProviderSettings {
+                enabled: s.sentry_enabled.unwrap_or(false),
+                has_secret: s.sentry_secret.is_some(),
+            },
+            datadog: WebhookProviderSettings {
+                enabled: s.datadog_enabled.unwrap_or(false),
+                has_secret: s.datadog_token.is_some(),
+            },
+            grafana: WebhookProviderSettings {
+                enabled: s.grafana_enabled.unwrap_or(false),
+                has_secret: s.grafana_token.is_some(),
+            },
+        })),
+        None => Ok(Json(WebhookSettingsResponse {
+            configured: false,
+            sentry: WebhookProviderSettings { enabled: false, has_secret: false },
+            datadog: WebhookProviderSettings { enabled: false, has_secret: false },
+            grafana: WebhookProviderSettings { enabled: false, has_secret: false },
+        })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateWebhookSettingsRequest {
+    pub sentry_enabled: Option<bool>,
+    pub sentry_secret: Option<String>,
+    pub datadog_enabled: Option<bool>,
+    pub datadog_token: Option<String>,
+    pub grafana_enabled: Option<bool>,
+    pub grafana_token: Option<String>,
+}
+
+/// PUT /api/v1/settings/webhooks - Update webhook settings
+pub async fn update_webhooks(
+    State(state): State<AppState>,
+    Json(req): Json<UpdateWebhookSettingsRequest>,
+) -> Result<Json<WebhookSettingsResponse>, AppError> {
+    // Check if settings exist
+    let existing: Option<WebhookSettingsRow> = sqlx::query_as(
+        "SELECT id, sentry_enabled, sentry_secret, datadog_enabled, datadog_token, grafana_enabled, grafana_token FROM webhook_settings LIMIT 1"
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if let Some(row) = existing {
+        // Update existing settings
+        sqlx::query(
+            r#"
+            UPDATE webhook_settings SET
+                sentry_enabled = COALESCE($1, sentry_enabled),
+                sentry_secret = CASE WHEN $2::TEXT IS NOT NULL THEN $2 ELSE sentry_secret END,
+                datadog_enabled = COALESCE($3, datadog_enabled),
+                datadog_token = CASE WHEN $4::TEXT IS NOT NULL THEN $4 ELSE datadog_token END,
+                grafana_enabled = COALESCE($5, grafana_enabled),
+                grafana_token = CASE WHEN $6::TEXT IS NOT NULL THEN $6 ELSE grafana_token END,
+                updated_at = NOW()
+            WHERE id = $7
+            "#
+        )
+        .bind(req.sentry_enabled)
+        .bind(&req.sentry_secret)
+        .bind(req.datadog_enabled)
+        .bind(&req.datadog_token)
+        .bind(req.grafana_enabled)
+        .bind(&req.grafana_token)
+        .bind(row.id)
+        .execute(&state.db)
+        .await?;
+    } else {
+        // Insert new settings
+        sqlx::query(
+            r#"
+            INSERT INTO webhook_settings
+                (sentry_enabled, sentry_secret, datadog_enabled, datadog_token, grafana_enabled, grafana_token)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#
+        )
+        .bind(req.sentry_enabled.unwrap_or(false))
+        .bind(&req.sentry_secret)
+        .bind(req.datadog_enabled.unwrap_or(false))
+        .bind(&req.datadog_token)
+        .bind(req.grafana_enabled.unwrap_or(false))
+        .bind(&req.grafana_token)
+        .execute(&state.db)
+        .await?;
+    }
+
+    // Reload webhook settings into app state
+    if let Err(e) = reload_webhook_settings(&state).await {
+        tracing::warn!("Failed to reload webhook settings: {}", e);
+    }
+
+    get_webhooks(State(state)).await
+}
+
+/// Reload webhook settings from database into app state
+async fn reload_webhook_settings(state: &AppState) -> Result<(), AppError> {
+    let settings: Option<WebhookSettingsRow> = sqlx::query_as(
+        r#"
+        SELECT id, sentry_enabled, sentry_secret,
+               datadog_enabled, datadog_token,
+               grafana_enabled, grafana_token
+        FROM webhook_settings
+        LIMIT 1
+        "#
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if let Some(s) = settings {
+        let mut config = state.config.clone();
+        config.webhooks = Some(crate::config::WebhooksConfig {
+            sentry_secret: if s.sentry_enabled.unwrap_or(false) { s.sentry_secret } else { None },
+            datadog_token: if s.datadog_enabled.unwrap_or(false) { s.datadog_token } else { None },
+            grafana_token: if s.grafana_enabled.unwrap_or(false) { s.grafana_token } else { None },
+        });
+        // Note: This updates a clone, not the actual state. For full hot-reload,
+        // you'd need to use Arc<RwLock<Config>> or similar. For now, changes take
+        // effect on next request that reads the DB directly.
+    }
+
+    Ok(())
+}

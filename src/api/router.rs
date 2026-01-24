@@ -100,6 +100,11 @@ pub fn build(state: AppState) -> Router {
         // Usage endpoints
         .route("/api/v1/usage/summary", get(settings::usage_summary))
         .route("/api/v1/usage/details", get(settings::usage_details))
+        // Webhook settings
+        .route(
+            "/api/v1/settings/webhooks",
+            get(settings::get_webhooks).put(settings::update_webhooks),
+        )
         // Status endpoint
         .route("/api/v1/status", get(api_status))
         .with_state(state.clone());

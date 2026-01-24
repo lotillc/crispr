@@ -390,3 +390,38 @@ export async function getUsageDetails(params?: {
 	const queryStr = query.toString();
 	return request(`/api/v1/usage/details${queryStr ? `?${queryStr}` : ''}`);
 }
+
+// Webhook Settings
+export interface WebhookSettings {
+	configured: boolean;
+	sentry: WebhookProviderSettings;
+	datadog: WebhookProviderSettings;
+	grafana: WebhookProviderSettings;
+}
+
+export interface WebhookProviderSettings {
+	enabled: boolean;
+	has_secret: boolean;
+}
+
+export interface UpdateWebhookSettingsRequest {
+	sentry_enabled?: boolean;
+	sentry_secret?: string;
+	datadog_enabled?: boolean;
+	datadog_token?: string;
+	grafana_enabled?: boolean;
+	grafana_token?: string;
+}
+
+export async function getWebhookSettings(): Promise<WebhookSettings> {
+	return request('/api/v1/settings/webhooks');
+}
+
+export async function updateWebhookSettings(
+	settings: UpdateWebhookSettingsRequest
+): Promise<WebhookSettings> {
+	return request('/api/v1/settings/webhooks', {
+		method: 'PUT',
+		body: JSON.stringify(settings)
+	});
+}

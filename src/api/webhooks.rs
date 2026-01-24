@@ -21,6 +21,69 @@ use super::ingest::IngestPayload;
 use super::{metrics, AppState};
 use crate::error::AppError;
 
+/// Cached webhook settings from database
+#[derive(Debug, Clone, Default)]
+struct WebhookSecrets {
+    sentry_enabled: bool,
+    sentry_secret: Option<String>,
+    datadog_enabled: bool,
+    datadog_token: Option<String>,
+    grafana_enabled: bool,
+    grafana_token: Option<String>,
+}
+
+/// Row type for webhook settings queries (runtime checking)
+#[derive(sqlx::FromRow)]
+struct WebhookSettingsRow {
+    sentry_enabled: Option<bool>,
+    sentry_secret: Option<String>,
+    datadog_enabled: Option<bool>,
+    datadog_token: Option<String>,
+    grafana_enabled: Option<bool>,
+    grafana_token: Option<String>,
+}
+
+/// Get webhook secrets from database (with fallback to config)
+async fn get_webhook_secrets(state: &AppState) -> WebhookSecrets {
+    // Try to get from database first
+    let result: Result<Option<WebhookSettingsRow>, _> = sqlx::query_as(
+        r#"
+        SELECT sentry_enabled, sentry_secret,
+               datadog_enabled, datadog_token,
+               grafana_enabled, grafana_token
+        FROM webhook_settings
+        LIMIT 1
+        "#
+    )
+    .fetch_optional(&state.db)
+    .await;
+
+    if let Ok(Some(row)) = result {
+        return WebhookSecrets {
+            sentry_enabled: row.sentry_enabled.unwrap_or(false),
+            sentry_secret: row.sentry_secret,
+            datadog_enabled: row.datadog_enabled.unwrap_or(false),
+            datadog_token: row.datadog_token,
+            grafana_enabled: row.grafana_enabled.unwrap_or(false),
+            grafana_token: row.grafana_token,
+        };
+    }
+
+    // Fall back to config file
+    if let Some(webhooks) = &state.config.webhooks {
+        WebhookSecrets {
+            sentry_enabled: webhooks.sentry_secret.is_some(),
+            sentry_secret: webhooks.sentry_secret.clone(),
+            datadog_enabled: webhooks.datadog_token.is_some(),
+            datadog_token: webhooks.datadog_token.clone(),
+            grafana_enabled: webhooks.grafana_token.is_some(),
+            grafana_token: webhooks.grafana_token.clone(),
+        }
+    } else {
+        WebhookSecrets::default()
+    }
+}
+
 // ============================================================================
 // Sentry Webhook Types
 // ============================================================================
@@ -231,8 +294,11 @@ pub async fn sentry_webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<WebhookResponse>, AppError> {
+    // Get webhook settings from database (with fallback to config)
+    let secrets = get_webhook_secrets(&state).await;
+
     // Verify the webhook signature if a secret is configured
-    if let Some(secret) = &state.config.webhooks.as_ref().and_then(|w| w.sentry_secret.as_ref()) {
+    if let Some(secret) = &secrets.sentry_secret {
         let signature = headers
             .get("sentry-hook-signature")
             .and_then(|v| v.to_str().ok())
@@ -522,8 +588,11 @@ pub async fn datadog_webhook(
         "Received Datadog webhook"
     );
 
-    // Verify webhook signature if configured
-    if let Some(expected_token) = &state.config.webhooks.as_ref().and_then(|w| w.datadog_token.as_ref()) {
+    // Get webhook settings from database (with fallback to config)
+    let secrets = get_webhook_secrets(&state).await;
+
+    // Verify webhook token if configured
+    if let Some(expected_token) = &secrets.datadog_token {
         if let Some(token) = headers.get("x-datadog-token") {
             let token_str = token.to_str().unwrap_or("");
             if token_str != expected_token.as_str() {
@@ -873,8 +942,11 @@ pub async fn grafana_webhook(
         "Received Grafana webhook"
     );
 
+    // Get webhook settings from database (with fallback to config)
+    let secrets = get_webhook_secrets(&state).await;
+
     // Verify webhook token if configured
-    if let Some(expected_token) = &state.config.webhooks.as_ref().and_then(|w| w.grafana_token.as_ref()) {
+    if let Some(expected_token) = &secrets.grafana_token {
         // Check Authorization header (Bearer token)
         let auth_valid = headers
             .get("authorization")

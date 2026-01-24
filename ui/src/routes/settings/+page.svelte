@@ -114,6 +114,19 @@
 	let testingSlack = $state(false);
 	let disconnectingSlack = $state(false);
 
+	// Webhook settings
+	let webhookSettings = $state<api.WebhookSettings | null>(null);
+	let loadingWebhooks = $state(false);
+	let savingWebhooks = $state(false);
+
+	// Webhook form state
+	let sentryEnabled = $state(false);
+	let sentrySecret = $state('');
+	let datadogEnabled = $state(false);
+	let datadogToken = $state('');
+	let grafanaEnabled = $state(false);
+	let grafanaToken = $state('');
+
 	const providers = [
 		{ value: 'anthropic', label: 'Anthropic (Claude)' },
 		{ value: 'openai', label: 'OpenAI (GPT)' },
@@ -138,7 +151,51 @@
 		if ($auth?.slack?.connected) {
 			await loadSlackChannels();
 		}
+
+		// Load webhook settings
+		await loadWebhookSettings();
 	});
+
+	async function loadWebhookSettings() {
+		loadingWebhooks = true;
+		try {
+			webhookSettings = await api.getWebhookSettings();
+			// Populate form
+			sentryEnabled = webhookSettings.sentry.enabled;
+			datadogEnabled = webhookSettings.datadog.enabled;
+			grafanaEnabled = webhookSettings.grafana.enabled;
+		} catch (e) {
+			console.error('Failed to load webhook settings:', e);
+		} finally {
+			loadingWebhooks = false;
+		}
+	}
+
+	async function saveWebhookSettings() {
+		savingWebhooks = true;
+		try {
+			const req: api.UpdateWebhookSettingsRequest = {
+				sentry_enabled: sentryEnabled,
+				datadog_enabled: datadogEnabled,
+				grafana_enabled: grafanaEnabled,
+			};
+			// Only send secrets if they've been entered (not placeholder)
+			if (sentrySecret) req.sentry_secret = sentrySecret;
+			if (datadogToken) req.datadog_token = datadogToken;
+			if (grafanaToken) req.grafana_token = grafanaToken;
+
+			webhookSettings = await api.updateWebhookSettings(req);
+			// Clear the secret inputs after save
+			sentrySecret = '';
+			datadogToken = '';
+			grafanaToken = '';
+			toasts.success('Webhook settings saved');
+		} catch (e) {
+			toasts.error(`Failed to save webhook settings: ${(e as Error).message}`);
+		} finally {
+			savingWebhooks = false;
+		}
+	}
 
 	async function loadSlackChannels() {
 		loadingChannels = true;
@@ -419,6 +476,138 @@
 				{/if}
 			</div>
 		</div>
+	</section>
+
+	<!-- Webhook Integrations -->
+	<section class="settings-section">
+		<h2>Webhook Integrations</h2>
+		<p class="section-desc">Receive errors from external monitoring platforms</p>
+
+		{#if loadingWebhooks}
+			<div class="loading-state">Loading webhook settings...</div>
+		{:else}
+			<div class="webhook-grid">
+				<!-- Sentry -->
+				<div class="webhook-card">
+					<div class="webhook-header">
+						<div class="webhook-icon sentry">
+							<svg viewBox="0 0 24 24" fill="currentColor">
+								<path d="M13.91 2.53c-.59-.29-1.31-.03-1.59.57L9.95 8.3c2.38 1.38 4.07 3.69 4.52 6.4h3.48c-.52-4.62-3.52-8.51-8.04-10.17zM3.35 17.78c-.24.47-.07 1.04.39 1.29l3.89 2c.47.24 1.04.07 1.29-.39.24-.47.07-1.04-.39-1.29l-3.89-2c-.47-.24-1.04-.07-1.29.39zm6.29-5.78c0-2.47-2-4.47-4.47-4.47-.47 0-.91.08-1.35.21l1.74 3c.35.6.14 1.37-.46 1.71-.6.35-1.37.14-1.71-.46L1.65 9c-.52.9-.82 1.93-.82 3.03 0 3.31 2.69 6 6 6h7.41c-.35-2.14-1.67-3.97-3.6-5.03z"/>
+							</svg>
+						</div>
+						<div class="webhook-info">
+							<h3>Sentry</h3>
+							<p>Receive error events from Sentry</p>
+						</div>
+						<label class="toggle">
+							<input type="checkbox" bind:checked={sentryEnabled} />
+							<span class="toggle-slider"></span>
+						</label>
+					</div>
+					{#if sentryEnabled}
+						<div class="webhook-config">
+							<div class="field">
+								<label class="field-label" for="sentry-secret">Webhook Secret</label>
+								<input
+									id="sentry-secret"
+									type="password"
+									bind:value={sentrySecret}
+									placeholder={webhookSettings?.sentry.has_secret ? '••••••••' : 'Enter HMAC secret'}
+									class="field-input"
+								/>
+								<span class="field-hint">HMAC-SHA256 secret for signature verification</span>
+							</div>
+							<div class="webhook-url">
+								<span class="label">Webhook URL:</span>
+								<code>/webhooks/sentry</code>
+							</div>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Datadog -->
+				<div class="webhook-card">
+					<div class="webhook-header">
+						<div class="webhook-icon datadog">
+							<svg viewBox="0 0 24 24" fill="currentColor">
+								<path d="M12.29 2.31c-.14-.05-.29-.06-.43-.03-.14.03-.27.1-.37.2l-2.66 2.66c-.2.2-.29.49-.23.77.06.28.25.51.51.62l.08.03 1.6.53-1.03 3.1-2.83-.94c-.28-.09-.58-.03-.81.16-.23.19-.35.48-.33.77l.28 3.93c.02.29.18.55.43.71.25.16.56.19.84.08l2.88-1.15 1.04 3.13-1.62.54c-.28.09-.49.32-.56.6-.07.28.01.58.21.78l2.66 2.66c.1.1.23.17.37.2.14.03.29.02.43-.03l8.09-2.99c.27-.1.47-.33.54-.61.07-.28-.01-.58-.21-.78l-2.66-2.66c-.2-.2-.49-.28-.77-.23-.28.06-.52.25-.63.51l-.52 1.58-3.11-1.04.94-2.83c.09-.28.03-.58-.16-.81-.19-.23-.48-.36-.77-.33l-3.93.28c-.29.02-.56.18-.72.43-.16.25-.2.56-.09.84l1.15 2.88-3.12 1.04-.53-1.61c-.09-.28-.32-.49-.6-.56-.28-.07-.58 0-.78.21l-2.66 2.66c-.1.1-.17.23-.2.37-.03.14-.02.29.03.43l2.99 8.09c.1.27.33.47.61.54.28.07.58-.01.78-.21l2.66-2.66c.2-.2.28-.49.23-.77-.05-.28-.25-.52-.51-.63l-1.58-.52 1.04-3.11 2.83.94c.28.09.58.03.81-.16.23-.19.36-.48.33-.77l-.28-3.93c-.02-.29-.18-.56-.43-.72-.25-.16-.56-.2-.84-.09l-2.88 1.15-1.04-3.12 1.61-.53c.28-.09.49-.32.56-.6.07-.28 0-.58-.21-.78l-2.66-2.66c-.2-.2-.49-.28-.77-.23-.28.05-.52.25-.63.51l-.52 1.58-3.11-1.04.94-2.83c.09-.28.03-.58-.16-.81-.19-.23-.48-.36-.77-.33l-3.93.28c-.29.02-.56.18-.72.43-.16.25-.2.56-.09.84l1.15 2.88-3.12 1.04-.53-1.61c-.09-.28-.32-.49-.6-.56-.28-.07-.58 0-.78.21l-2.66 2.66c-.1.1-.17.23-.2.37-.03.14-.02.29.03.43l2.99 8.09z"/>
+							</svg>
+						</div>
+						<div class="webhook-info">
+							<h3>Datadog</h3>
+							<p>Receive monitor alerts from Datadog</p>
+						</div>
+						<label class="toggle">
+							<input type="checkbox" bind:checked={datadogEnabled} />
+							<span class="toggle-slider"></span>
+						</label>
+					</div>
+					{#if datadogEnabled}
+						<div class="webhook-config">
+							<div class="field">
+								<label class="field-label" for="datadog-token">Webhook Token</label>
+								<input
+									id="datadog-token"
+									type="password"
+									bind:value={datadogToken}
+									placeholder={webhookSettings?.datadog.has_secret ? '••••••••' : 'Enter token'}
+									class="field-input"
+								/>
+								<span class="field-hint">Token sent in X-Datadog-Token header</span>
+							</div>
+							<div class="webhook-url">
+								<span class="label">Webhook URL:</span>
+								<code>/webhooks/datadog</code>
+							</div>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Grafana -->
+				<div class="webhook-card">
+					<div class="webhook-header">
+						<div class="webhook-icon grafana">
+							<svg viewBox="0 0 24 24" fill="currentColor">
+								<path d="M22.16 7.82c-.02-.2-.04-.39-.07-.58-.04-.25-.17-.48-.37-.64-.2-.16-.45-.24-.7-.22-.25.02-.48.13-.65.31-.17.18-.27.42-.28.67 0 .05 0 .11.01.16-.07-.02-.14-.04-.21-.05-.19-.03-.39 0-.56.1-.17.1-.3.25-.38.43-.08.18-.1.38-.06.57.04.19.14.37.29.5-.1.07-.2.16-.28.26-.14.17-.22.39-.23.61-.01.22.05.44.18.62.13.18.31.32.52.39-.04.12-.07.24-.08.37-.03.22.02.45.13.64.11.19.28.35.49.44.21.09.44.11.66.06-.01.12 0 .25.03.37.05.21.17.4.33.54.16.14.37.23.58.24.21.01.43-.04.61-.16.08.11.18.21.29.29.17.13.38.2.59.21.21.01.43-.05.61-.17.18-.12.32-.3.4-.5.12.05.25.08.38.1.22.02.44-.03.63-.14.19-.11.34-.28.42-.48.08-.2.1-.42.05-.63.12-.03.23-.08.34-.14.19-.11.34-.28.43-.48.09-.2.11-.43.05-.64-.06-.21-.18-.4-.36-.53.09-.09.16-.19.22-.31.11-.19.15-.41.11-.63-.04-.22-.15-.42-.32-.57-.17-.15-.38-.24-.6-.25.04-.12.07-.25.08-.38.02-.22-.03-.44-.15-.63-.12-.19-.3-.33-.51-.41-.21-.08-.44-.09-.66-.03.01-.13-.01-.26-.04-.38-.06-.21-.18-.4-.35-.53-.17-.13-.38-.21-.59-.21-.21 0-.42.07-.59.21-.08-.1-.17-.18-.28-.26-.17-.12-.37-.19-.58-.19-.21 0-.42.07-.59.2-.17.13-.3.31-.35.52zm-10.18 1.09c.58 0 1.05.47 1.05 1.05s-.47 1.05-1.05 1.05-1.05-.47-1.05-1.05.47-1.05 1.05-1.05zm0 7.14c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/>
+							</svg>
+						</div>
+						<div class="webhook-info">
+							<h3>Grafana</h3>
+							<p>Receive alert notifications from Grafana</p>
+						</div>
+						<label class="toggle">
+							<input type="checkbox" bind:checked={grafanaEnabled} />
+							<span class="toggle-slider"></span>
+						</label>
+					</div>
+					{#if grafanaEnabled}
+						<div class="webhook-config">
+							<div class="field">
+								<label class="field-label" for="grafana-token">Bearer Token</label>
+								<input
+									id="grafana-token"
+									type="password"
+									bind:value={grafanaToken}
+									placeholder={webhookSettings?.grafana.has_secret ? '••••••••' : 'Enter token'}
+									class="field-input"
+								/>
+								<span class="field-hint">Bearer token for Authorization header</span>
+							</div>
+							<div class="webhook-url">
+								<span class="label">Webhook URL:</span>
+								<code>/webhooks/grafana</code>
+							</div>
+						</div>
+					{/if}
+				</div>
+			</div>
+
+			<div class="webhook-actions">
+				<button class="btn btn-primary" onclick={saveWebhookSettings} disabled={savingWebhooks}>
+					{savingWebhooks ? 'Saving...' : 'Save Webhook Settings'}
+				</button>
+			</div>
+		{/if}
 	</section>
 
 	<!-- LLM Configuration -->
@@ -1259,5 +1448,196 @@
 
 	.btn-primary:disabled:hover {
 		background: var(--slate);
+	}
+
+	/* Webhook Integrations */
+	.loading-state {
+		padding: var(--space-lg);
+		text-align: center;
+		color: var(--slate);
+		font-size: 0.875rem;
+	}
+
+	.webhook-grid {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-md);
+	}
+
+	.webhook-card {
+		background: var(--white);
+		border: 1px solid var(--silver);
+		border-radius: var(--radius-lg);
+		overflow: hidden;
+	}
+
+	.webhook-header {
+		display: flex;
+		align-items: center;
+		gap: var(--space-lg);
+		padding: var(--space-lg);
+	}
+
+	.webhook-icon {
+		width: 48px;
+		height: 48px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: var(--radius-md);
+		flex-shrink: 0;
+	}
+
+	.webhook-icon svg {
+		width: 24px;
+		height: 24px;
+	}
+
+	.webhook-icon.sentry {
+		background: #362D59;
+		color: white;
+	}
+
+	.webhook-icon.datadog {
+		background: #632CA6;
+		color: white;
+	}
+
+	.webhook-icon.grafana {
+		background: #F46800;
+		color: white;
+	}
+
+	.webhook-info {
+		flex: 1;
+	}
+
+	.webhook-info h3 {
+		font-family: var(--font-body);
+		font-size: 1rem;
+		font-weight: 600;
+		margin-bottom: var(--space-xs);
+	}
+
+	.webhook-info p {
+		font-size: 0.8125rem;
+		color: var(--graphite);
+	}
+
+	.webhook-config {
+		padding: var(--space-lg);
+		padding-top: 0;
+	}
+
+	.webhook-config .field {
+		margin-bottom: var(--space-md);
+	}
+
+	.field-hint {
+		font-size: 0.75rem;
+		color: var(--slate);
+		margin-top: var(--space-xs);
+	}
+
+	.webhook-url {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		background: var(--paper);
+		border-radius: var(--radius-md);
+		font-size: 0.8125rem;
+	}
+
+	.webhook-url .label {
+		color: var(--slate);
+	}
+
+	.webhook-url code {
+		font-family: 'SF Mono', monospace;
+		color: var(--charcoal);
+	}
+
+	.webhook-actions {
+		margin-top: var(--space-lg);
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	/* Toggle Switch */
+	.toggle {
+		position: relative;
+		display: inline-block;
+		width: 48px;
+		height: 28px;
+		flex-shrink: 0;
+	}
+
+	.toggle input {
+		opacity: 0;
+		width: 0;
+		height: 0;
+	}
+
+	.toggle-slider {
+		position: absolute;
+		cursor: pointer;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: var(--silver);
+		transition: var(--transition-fast);
+		border-radius: var(--radius-full);
+	}
+
+	.toggle-slider:before {
+		position: absolute;
+		content: "";
+		height: 22px;
+		width: 22px;
+		left: 3px;
+		bottom: 3px;
+		background-color: white;
+		transition: var(--transition-fast);
+		border-radius: 50%;
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+	}
+
+	.toggle input:checked + .toggle-slider {
+		background-color: var(--scrubs);
+	}
+
+	.toggle input:checked + .toggle-slider:before {
+		transform: translateX(20px);
+	}
+
+	.toggle input:focus + .toggle-slider {
+		box-shadow: 0 0 0 3px var(--scrubs-soft);
+	}
+
+	@media (max-width: 768px) {
+		.webhook-header {
+			flex-wrap: wrap;
+			gap: var(--space-md);
+		}
+
+		.webhook-info {
+			flex: 1 1 calc(100% - 120px);
+		}
+
+		.webhook-config {
+			padding: var(--space-md);
+			padding-top: 0;
+		}
+
+		.webhook-actions {
+			flex-direction: column;
+		}
+
+		.webhook-actions .btn {
+			width: 100%;
+			min-height: 44px;
+		}
 	}
 </style>
