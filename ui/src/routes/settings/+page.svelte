@@ -629,7 +629,7 @@
 									{/if}
 								</div>
 								{#if showDatadogToken && datadogToken}
-									<span class="field-hint field-hint-warning">Copy this token to configure Datadog - you won't be able to view it again after saving</span>
+									<span class="field-hint field-hint-warning">Copy this token and paste it in Datadog before saving</span>
 								{/if}
 							</div>
 							<div class="webhook-url-field">
@@ -703,7 +703,7 @@
 									{/if}
 								</div>
 								{#if showGrafanaToken && grafanaToken}
-									<span class="field-hint field-hint-warning">Copy this token to configure Grafana - you won't be able to view it again after saving</span>
+									<span class="field-hint field-hint-warning">Copy this token and paste it in Grafana before saving</span>
 								{/if}
 							</div>
 							<div class="webhook-url-field">

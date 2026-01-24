@@ -450,6 +450,7 @@ struct WebhookSettingsRow {
 
 /// GET /api/v1/settings/webhooks - Get webhook settings
 pub async fn get_webhooks(State(state): State<AppState>) -> Result<Json<WebhookSettingsResponse>, AppError> {
+    // Query may fail if table doesn't exist (migration not run yet)
     let settings: Option<WebhookSettingsRow> = sqlx::query_as(
         r#"
         SELECT id, sentry_enabled, sentry_secret,
@@ -460,7 +461,11 @@ pub async fn get_webhooks(State(state): State<AppState>) -> Result<Json<WebhookS
         "#
     )
     .fetch_optional(&state.db)
-    .await?;
+    .await
+    .unwrap_or_else(|e| {
+        tracing::debug!("Webhook settings table query failed (migration may not be run): {}", e);
+        None
+    });
 
     match settings {
         Some(s) => Ok(Json(WebhookSettingsResponse {
@@ -502,12 +507,16 @@ pub async fn update_webhooks(
     State(state): State<AppState>,
     Json(req): Json<UpdateWebhookSettingsRequest>,
 ) -> Result<Json<WebhookSettingsResponse>, AppError> {
-    // Check if settings exist
+    // Check if settings exist (table may not exist if migration not run)
     let existing: Option<WebhookSettingsRow> = sqlx::query_as(
         "SELECT id, sentry_enabled, sentry_secret, datadog_enabled, datadog_token, grafana_enabled, grafana_token FROM webhook_settings LIMIT 1"
     )
     .fetch_optional(&state.db)
-    .await?;
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to query webhook_settings: {}. Run migration 007_webhook_settings.sql", e);
+        AppError::Internal("Webhook settings not available. Database migration may be required.".into())
+    })?;
 
     if let Some(row) = existing {
         // Update existing settings
