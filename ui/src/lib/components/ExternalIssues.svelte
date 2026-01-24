@@ -2,7 +2,11 @@
 	import { onMount } from 'svelte';
 	import { getIncidentExternalIssues, type ExternalIssue } from '$lib/api';
 
-	export let incidentId: string;
+	interface Props {
+		incidentId: string;
+	}
+
+	let { incidentId }: Props = $props();
 
 	let issues: ExternalIssue[] = [];
 	let loading = true;

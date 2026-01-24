@@ -6,18 +6,19 @@
 		deleteProjectIssueTracker,
 		testWebhook,
 		getJiraStatus,
-		connectJira,
-		disconnectJira,
 		getLinearStatus,
-		connectLinear,
-		disconnectLinear,
 		type IssueTrackerConfig,
 		type IssueTrackerProvider,
 		type JiraConnectionStatus,
 		type LinearConnectionStatus
 	} from '$lib/api';
+	import { auth } from '$lib/stores';
 
-	export let projectId: string;
+	interface Props {
+		projectId: string;
+	}
+
+	let { projectId }: Props = $props();
 
 	let trackers: IssueTrackerConfig[] = [];
 	let jiraStatus: JiraConnectionStatus | null = null;
@@ -26,33 +27,52 @@
 	let error = '';
 	let success = '';
 
-	// Form state
-	let activeTab: IssueTrackerProvider = 'github';
+	// Determine available tabs based on global connections
+	let availableTabs = $derived.by(() => {
+		const tabs: { id: IssueTrackerProvider; label: string; configured: boolean }[] = [];
+
+		// Add Jira if globally connected
+		if (jiraStatus?.connected) {
+			tabs.push({ id: 'jira', label: 'Jira', configured: true });
+		}
+
+		// Add Linear if globally connected
+		if (linearStatus?.connected) {
+			tabs.push({ id: 'linear', label: 'Linear', configured: true });
+		}
+
+		// GitHub is always available (uses same GitHub connection)
+		tabs.push({ id: 'github', label: 'GitHub Issues', configured: $auth?.github?.connected ?? false });
+
+		// Webhook is always available
+		tabs.push({ id: 'webhook', label: 'Webhook', configured: true });
+
+		return tabs;
+	});
+
+	// Set default tab to first configured integration
+	let activeTab: IssueTrackerProvider = $state('github');
 
 	// GitHub form
-	let githubEnabled = false;
-	let githubLabels = '';
-	let githubAssignees = '';
+	let githubEnabled = $state(false);
+	let githubLabels = $state('');
+	let githubAssignees = $state('');
 
-	// Jira form
-	let jiraEnabled = false;
-	let jiraSiteUrl = '';
-	let jiraEmail = '';
-	let jiraApiToken = '';
-	let jiraProjectKey = '';
-	let jiraIssueType = 'Bug';
+	// Jira form (project-specific only - auth is global)
+	let jiraEnabled = $state(false);
+	let jiraProjectKey = $state('');
+	let jiraIssueType = $state('Bug');
 
-	// Linear form
-	let linearEnabled = false;
-	let linearApiKey = '';
-	let linearTeamId = '';
+	// Linear form (project-specific only - auth is global)
+	let linearEnabled = $state(false);
+	let linearTeamId = $state('');
 
 	// Webhook form
-	let webhookEnabled = false;
-	let webhookUrl = '';
-	let webhookAuthHeader = '';
-	let webhookEvents = 'all';
-	let webhookTestResult: { success: boolean; message: string } | null = null;
+	let webhookEnabled = $state(false);
+	let webhookUrl = $state('');
+	let webhookAuthHeader = $state('');
+	let webhookEvents = $state('all');
+	let webhookTestResult = $state<{ success: boolean; message: string } | null>(null);
 
 	const CRISPR_STATES = [
 		'detected',
@@ -84,6 +104,15 @@
 			jiraStatus = jiraData;
 			linearStatus = linearData;
 
+			// Set default tab to first configured external tracker, or github
+			if (jiraData?.connected) {
+				activeTab = 'jira';
+			} else if (linearData?.connected) {
+				activeTab = 'linear';
+			} else {
+				activeTab = 'github';
+			}
+
 			// Populate forms from existing config
 			const githubConfig = trackers.find((t) => t.provider === 'github');
 			if (githubConfig) {
@@ -95,7 +124,6 @@
 			const jiraConfig = trackers.find((t) => t.provider === 'jira');
 			if (jiraConfig) {
 				jiraEnabled = jiraConfig.enabled;
-				jiraSiteUrl = jiraConfig.jira_site_url || '';
 				jiraProjectKey = jiraConfig.jira_project_key || '';
 				jiraIssueType = jiraConfig.jira_issue_type || 'Bug';
 			}
@@ -146,15 +174,9 @@
 		error = '';
 		success = '';
 		try {
-			// If not connected, connect first
-			if (!jiraStatus?.connected && jiraEmail && jiraApiToken) {
-				await connectJira(jiraSiteUrl, jiraEmail, jiraApiToken);
-			}
-
 			await upsertProjectIssueTracker(projectId, 'jira', {
 				provider: 'jira',
 				enabled: jiraEnabled,
-				jira_site_url: jiraSiteUrl,
 				jira_project_key: jiraProjectKey,
 				jira_issue_type: jiraIssueType
 			});
@@ -165,26 +187,10 @@
 		}
 	}
 
-	async function handleDisconnectJira() {
-		error = '';
-		try {
-			await disconnectJira();
-			jiraStatus = { connected: false };
-			success = 'Jira disconnected';
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to disconnect';
-		}
-	}
-
 	async function saveLinear() {
 		error = '';
 		success = '';
 		try {
-			// If not connected, connect first
-			if (!linearStatus?.connected && linearApiKey) {
-				await connectLinear(linearApiKey);
-			}
-
 			await upsertProjectIssueTracker(projectId, 'linear', {
 				provider: 'linear',
 				enabled: linearEnabled,
@@ -194,17 +200,6 @@
 			await loadData();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to save';
-		}
-	}
-
-	async function handleDisconnectLinear() {
-		error = '';
-		try {
-			await disconnectLinear();
-			linearStatus = { connected: false };
-			success = 'Linear disconnected';
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to disconnect';
 		}
 	}
 
@@ -272,10 +267,8 @@
 </script>
 
 <div class="issue-tracker-settings">
-	<h3>Issue Tracker Integration</h3>
 	<p class="description">
-		Automatically create and update issues in external trackers as incidents progress through the
-		pipeline.
+		Create and update issues in external trackers as incidents progress.
 	</p>
 
 	{#if error}
@@ -290,111 +283,76 @@
 		<div class="loading">Loading...</div>
 	{:else}
 		<div class="tabs">
-			<button class:active={activeTab === 'github'} on:click={() => (activeTab = 'github')}>
-				GitHub Issues
-			</button>
-			<button class:active={activeTab === 'jira'} on:click={() => (activeTab = 'jira')}>
-				Jira
-			</button>
-			<button class:active={activeTab === 'linear'} on:click={() => (activeTab = 'linear')}>
-				Linear
-			</button>
-			<button class:active={activeTab === 'webhook'} on:click={() => (activeTab = 'webhook')}>
-				Webhook
-			</button>
+			{#each availableTabs as tab}
+				<button
+					class:active={activeTab === tab.id}
+					onclick={() => activeTab = tab.id}
+				>
+					{tab.label}
+					{#if trackers.find(t => t.provider === tab.id && t.enabled)}
+						<span class="enabled-dot"></span>
+					{/if}
+				</button>
+			{/each}
 		</div>
 
 		<div class="tab-content">
 			{#if activeTab === 'github'}
 				<div class="form-section">
-					<p class="provider-description">
-						Create GitHub issues in the same repository to track incidents.
-					</p>
+					{#if !$auth?.github?.connected}
+						<div class="not-configured">
+							<p>GitHub is not connected. Connect GitHub in the global settings to use GitHub Issues.</p>
+						</div>
+					{:else}
+						<label class="checkbox-label">
+							<input type="checkbox" bind:checked={githubEnabled} />
+							Enable GitHub Issues for this project
+						</label>
 
-					<label class="checkbox-label">
-						<input type="checkbox" bind:checked={githubEnabled} />
-						Enable GitHub Issues
-					</label>
+						<div class="form-group">
+							<label for="github-labels">Labels (comma-separated)</label>
+							<input
+								type="text"
+								id="github-labels"
+								bind:value={githubLabels}
+								placeholder="bug, crispr, auto-fix"
+							/>
+						</div>
 
-					<div class="form-group">
-						<label for="github-labels">Labels (comma-separated)</label>
-						<input
-							type="text"
-							id="github-labels"
-							bind:value={githubLabels}
-							placeholder="bug, crispr, auto-fix"
-						/>
-					</div>
+						<div class="form-group">
+							<label for="github-assignees">Assignees (comma-separated)</label>
+							<input
+								type="text"
+								id="github-assignees"
+								bind:value={githubAssignees}
+								placeholder="username1, username2"
+							/>
+						</div>
 
-					<div class="form-group">
-						<label for="github-assignees">Assignees (comma-separated)</label>
-						<input
-							type="text"
-							id="github-assignees"
-							bind:value={githubAssignees}
-							placeholder="username1, username2"
-						/>
-					</div>
-
-					<div class="button-row">
-						<button class="primary" on:click={saveGitHub}>Save</button>
-						{#if trackers.find((t) => t.provider === 'github')}
-							<button class="danger" on:click={() => handleDelete('github')}>Remove</button>
-						{/if}
-					</div>
+						<div class="button-row">
+							<button class="primary" onclick={saveGitHub}>Save</button>
+							{#if trackers.find((t) => t.provider === 'github')}
+								<button class="danger" onclick={() => handleDelete('github')}>Remove</button>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{:else if activeTab === 'jira'}
 				<div class="form-section">
-					<p class="provider-description">
-						Create Jira issues and transition them through your workflow.
-					</p>
-
-					{#if jiraStatus?.connected}
-						<div class="connection-status connected">
-							Connected to {jiraStatus.site_url}
-							<button class="text-button" on:click={handleDisconnectJira}>Disconnect</button>
-						</div>
-					{:else}
-						<div class="form-group">
-							<label for="jira-site">Jira Site URL</label>
-							<input
-								type="text"
-								id="jira-site"
-								bind:value={jiraSiteUrl}
-								placeholder="https://company.atlassian.net"
-							/>
-						</div>
-
-						<div class="form-group">
-							<label for="jira-email">Email</label>
-							<input type="email" id="jira-email" bind:value={jiraEmail} placeholder="you@company.com" />
-						</div>
-
-						<div class="form-group">
-							<label for="jira-token">API Token</label>
-							<input
-								type="password"
-								id="jira-token"
-								bind:value={jiraApiToken}
-								placeholder="Your Jira API token"
-							/>
-							<small
-								>Get your token from <a
-									href="https://id.atlassian.com/manage-profile/security/api-tokens"
-									target="_blank">Atlassian Account Settings</a
-								></small
-							>
-						</div>
-					{/if}
+					<div class="connection-info">
+						Connected to <strong>{jiraStatus?.site_url}</strong>
+						<span class="hint">Manage connection in global settings</span>
+					</div>
 
 					<label class="checkbox-label">
 						<input type="checkbox" bind:checked={jiraEnabled} />
-						Enable Jira Integration
+						Enable Jira for this project
 					</label>
 
 					<div class="form-group">
 						<label for="jira-project">Project Key</label>
 						<input type="text" id="jira-project" bind:value={jiraProjectKey} placeholder="PROJ" />
+						<small>The Jira project key where issues will be created</small>
 					</div>
 
 					<div class="form-group">
@@ -407,52 +365,34 @@
 					</div>
 
 					<div class="button-row">
-						<button class="primary" on:click={saveJira}>Save</button>
+						<button class="primary" onclick={saveJira}>Save</button>
 						{#if trackers.find((t) => t.provider === 'jira')}
-							<button class="danger" on:click={() => handleDelete('jira')}>Remove</button>
+							<button class="danger" onclick={() => handleDelete('jira')}>Remove</button>
 						{/if}
 					</div>
 				</div>
 			{:else if activeTab === 'linear'}
 				<div class="form-section">
-					<p class="provider-description">Create Linear issues to track incidents.</p>
-
-					{#if linearStatus?.connected}
-						<div class="connection-status connected">
-							Connected as {linearStatus.connected_by}
-							<button class="text-button" on:click={handleDisconnectLinear}>Disconnect</button>
-						</div>
-					{:else}
-						<div class="form-group">
-							<label for="linear-key">API Key</label>
-							<input
-								type="password"
-								id="linear-key"
-								bind:value={linearApiKey}
-								placeholder="lin_api_..."
-							/>
-							<small
-								>Get your API key from <a href="https://linear.app/settings/api" target="_blank"
-									>Linear Settings</a
-								></small
-							>
-						</div>
-					{/if}
+					<div class="connection-info">
+						Connected to <strong>{linearStatus?.organization_name || 'Linear'}</strong>
+						<span class="hint">Manage connection in global settings</span>
+					</div>
 
 					<label class="checkbox-label">
 						<input type="checkbox" bind:checked={linearEnabled} />
-						Enable Linear Integration
+						Enable Linear for this project
 					</label>
 
 					<div class="form-group">
 						<label for="linear-team">Team ID</label>
 						<input type="text" id="linear-team" bind:value={linearTeamId} placeholder="team-id" />
+						<small>The Linear team where issues will be created</small>
 					</div>
 
 					<div class="button-row">
-						<button class="primary" on:click={saveLinear}>Save</button>
+						<button class="primary" onclick={saveLinear}>Save</button>
 						{#if trackers.find((t) => t.provider === 'linear')}
-							<button class="danger" on:click={() => handleDelete('linear')}>Remove</button>
+							<button class="danger" onclick={() => handleDelete('linear')}>Remove</button>
 						{/if}
 					</div>
 				</div>
@@ -464,7 +404,7 @@
 
 					<label class="checkbox-label">
 						<input type="checkbox" bind:checked={webhookEnabled} />
-						Enable Webhook
+						Enable Webhook for this project
 					</label>
 
 					<div class="form-group">
@@ -505,12 +445,12 @@
 					{/if}
 
 					<div class="button-row">
-						<button class="secondary" on:click={handleTestWebhook} disabled={!webhookUrl}>
+						<button class="secondary" onclick={handleTestWebhook} disabled={!webhookUrl}>
 							Test Webhook
 						</button>
-						<button class="primary" on:click={saveWebhook}>Save</button>
+						<button class="primary" onclick={saveWebhook}>Save</button>
 						{#if trackers.find((t) => t.provider === 'webhook')}
-							<button class="danger" on:click={() => handleDelete('webhook')}>Remove</button>
+							<button class="danger" onclick={() => handleDelete('webhook')}>Remove</button>
 						{/if}
 					</div>
 				</div>
@@ -521,54 +461,58 @@
 
 <style>
 	.issue-tracker-settings {
-		padding: 1.5rem;
-		background: var(--surface-secondary, #1a1a1a);
-		border-radius: 8px;
-	}
-
-	h3 {
-		margin: 0 0 0.5rem 0;
-		color: var(--text-primary, #fff);
+		padding: 0;
 	}
 
 	.description {
-		color: var(--text-secondary, #888);
+		color: var(--graphite);
 		margin-bottom: 1.5rem;
-		font-size: 0.9rem;
+		font-size: 0.875rem;
 	}
 
 	.provider-description {
-		color: var(--text-secondary, #888);
-		font-size: 0.85rem;
+		color: var(--graphite);
+		font-size: 0.8125rem;
 		margin-bottom: 1rem;
 	}
 
 	.tabs {
 		display: flex;
-		gap: 0.5rem;
+		gap: 0.25rem;
 		margin-bottom: 1.5rem;
-		border-bottom: 1px solid var(--border-color, #333);
-		padding-bottom: 0.5rem;
+		border-bottom: 1px solid var(--silver);
+		padding-bottom: 0;
 	}
 
 	.tabs button {
-		padding: 0.5rem 1rem;
+		padding: 0.75rem 1rem;
 		background: none;
 		border: none;
-		color: var(--text-secondary, #888);
+		border-bottom: 2px solid transparent;
+		color: var(--graphite);
 		cursor: pointer;
-		border-radius: 4px;
 		transition: all 0.2s;
+		font-size: 0.875rem;
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.tabs button:hover {
-		background: var(--surface-hover, #2a2a2a);
-		color: var(--text-primary, #fff);
+		color: var(--charcoal);
 	}
 
 	.tabs button.active {
-		background: var(--accent-color, #4a9eff);
-		color: #fff;
+		color: var(--scrubs);
+		border-bottom-color: var(--scrubs);
+	}
+
+	.enabled-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--scrubs);
 	}
 
 	.form-section {
@@ -584,46 +528,46 @@
 	}
 
 	.form-group label {
-		color: var(--text-secondary, #888);
-		font-size: 0.85rem;
+		color: var(--charcoal);
+		font-size: 0.8125rem;
+		font-weight: 500;
 	}
 
 	.form-group input,
 	.form-group select {
-		padding: 0.75rem;
-		background: var(--surface-primary, #0a0a0a);
-		border: 1px solid var(--border-color, #333);
-		border-radius: 4px;
-		color: var(--text-primary, #fff);
-		font-size: 0.9rem;
+		padding: 0.625rem 0.75rem;
+		background: var(--white);
+		border: 1px solid var(--silver);
+		border-radius: var(--radius-md);
+		color: var(--charcoal);
+		font-size: 0.875rem;
 	}
 
 	.form-group input:focus,
 	.form-group select:focus {
 		outline: none;
-		border-color: var(--accent-color, #4a9eff);
+		border-color: var(--scrubs);
+		box-shadow: 0 0 0 3px var(--scrubs-soft);
 	}
 
 	.form-group small {
-		color: var(--text-secondary, #666);
-		font-size: 0.8rem;
-	}
-
-	.form-group small a {
-		color: var(--accent-color, #4a9eff);
+		color: var(--slate);
+		font-size: 0.75rem;
 	}
 
 	.checkbox-label {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		color: var(--text-primary, #fff);
+		color: var(--charcoal);
 		cursor: pointer;
+		font-size: 0.875rem;
 	}
 
 	.checkbox-label input[type='checkbox'] {
 		width: 18px;
 		height: 18px;
+		accent-color: var(--scrubs);
 	}
 
 	.button-row {
@@ -633,100 +577,116 @@
 	}
 
 	button.primary {
-		padding: 0.75rem 1.5rem;
-		background: var(--accent-color, #4a9eff);
+		padding: 0.625rem 1.25rem;
+		background: var(--scrubs);
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-md);
 		color: #fff;
 		cursor: pointer;
 		font-weight: 500;
+		font-size: 0.875rem;
 	}
 
 	button.primary:hover {
-		opacity: 0.9;
+		background: var(--scrubs-dark);
 	}
 
 	button.secondary {
-		padding: 0.75rem 1.5rem;
-		background: var(--surface-hover, #2a2a2a);
-		border: 1px solid var(--border-color, #333);
-		border-radius: 4px;
-		color: var(--text-primary, #fff);
+		padding: 0.625rem 1.25rem;
+		background: var(--white);
+		border: 1px solid var(--silver);
+		border-radius: var(--radius-md);
+		color: var(--charcoal);
 		cursor: pointer;
+		font-size: 0.875rem;
+	}
+
+	button.secondary:hover {
+		background: var(--paper);
 	}
 
 	button.danger {
-		padding: 0.75rem 1.5rem;
+		padding: 0.625rem 1.25rem;
 		background: transparent;
-		border: 1px solid var(--error-color, #ff4444);
-		border-radius: 4px;
-		color: var(--error-color, #ff4444);
+		border: 1px solid var(--critical);
+		border-radius: var(--radius-md);
+		color: var(--critical);
 		cursor: pointer;
+		font-size: 0.875rem;
 	}
 
 	button.danger:hover {
-		background: var(--error-color, #ff4444);
-		color: #fff;
+		background: var(--critical-soft);
 	}
 
-	button.text-button {
-		background: none;
-		border: none;
-		color: var(--accent-color, #4a9eff);
-		cursor: pointer;
-		padding: 0;
-		margin-left: 0.5rem;
+	.connection-info {
+		padding: 0.75rem 1rem;
+		background: var(--scrubs-soft);
+		border-radius: var(--radius-md);
+		font-size: 0.875rem;
+		color: var(--scrubs-dark);
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
 	}
 
-	.connection-status {
-		padding: 0.75rem;
-		border-radius: 4px;
-		font-size: 0.9rem;
+	.connection-info .hint {
+		color: var(--slate);
+		font-size: 0.75rem;
+		margin-left: auto;
 	}
 
-	.connection-status.connected {
-		background: rgba(74, 222, 128, 0.1);
-		color: #4ade80;
-		border: 1px solid rgba(74, 222, 128, 0.3);
+	.not-configured {
+		padding: 1rem;
+		background: var(--paper);
+		border-radius: var(--radius-md);
+		text-align: center;
+	}
+
+	.not-configured p {
+		color: var(--graphite);
+		font-size: 0.875rem;
+		margin: 0;
 	}
 
 	.test-result {
 		padding: 0.75rem;
-		border-radius: 4px;
-		font-size: 0.9rem;
+		border-radius: var(--radius-md);
+		font-size: 0.875rem;
 	}
 
 	.test-result.success {
-		background: rgba(74, 222, 128, 0.1);
-		color: #4ade80;
+		background: var(--scrubs-soft);
+		color: var(--scrubs-dark);
 	}
 
 	.test-result:not(.success) {
-		background: rgba(255, 68, 68, 0.1);
-		color: #ff4444;
+		background: var(--critical-soft);
+		color: var(--critical);
 	}
 
 	.error-message {
 		padding: 0.75rem;
-		background: rgba(255, 68, 68, 0.1);
-		border: 1px solid rgba(255, 68, 68, 0.3);
-		border-radius: 4px;
-		color: #ff4444;
+		background: var(--critical-soft);
+		border-radius: var(--radius-md);
+		color: var(--critical);
 		margin-bottom: 1rem;
+		font-size: 0.875rem;
 	}
 
 	.success-message {
 		padding: 0.75rem;
-		background: rgba(74, 222, 128, 0.1);
-		border: 1px solid rgba(74, 222, 128, 0.3);
-		border-radius: 4px;
-		color: #4ade80;
+		background: var(--scrubs-soft);
+		border-radius: var(--radius-md);
+		color: var(--scrubs-dark);
 		margin-bottom: 1rem;
+		font-size: 0.875rem;
 	}
 
 	.loading {
 		text-align: center;
-		color: var(--text-secondary, #888);
+		color: var(--graphite);
 		padding: 2rem;
 	}
 </style>
