@@ -176,11 +176,25 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 	});
 
 	if (!response.ok) {
-		const error = await response.text();
-		throw new Error(error || response.statusText);
+		const text = await response.text();
+		// Try to parse as JSON error
+		try {
+			const json = JSON.parse(text);
+			throw new Error(json.error || json.message || text);
+		} catch {
+			throw new Error(text || response.statusText);
+		}
 	}
 
-	return response.json();
+	const text = await response.text();
+	if (!text) {
+		return {} as T;
+	}
+	try {
+		return JSON.parse(text);
+	} catch {
+		throw new Error(`Invalid JSON response: ${text.substring(0, 100)}`);
+	}
 }
 
 // Status
