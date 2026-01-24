@@ -544,6 +544,9 @@
 									<li>Set a <strong>Secret</strong> in Sentry, then enter it here</li>
 									<li>Select which events to send (Issues, Errors, etc.)</li>
 								</ol>
+								<div class="webhook-requirement">
+									<strong>Required:</strong> Name your Sentry project as <code>owner-repo</code> (e.g., <code>acme-api</code> for <code>acme/api</code>), or add a <code>project</code> tag to your events with value <code>owner/repo</code>
+								</div>
 							</div>
 							<div class="field">
 								<label class="field-label" for="sentry-secret">Webhook Secret (from Sentry)</label>
@@ -598,6 +601,9 @@
 									<li>Create a new webhook with the URL below</li>
 									<li>Add custom header: <code>X-Datadog-Token: <em>your-token</em></code></li>
 								</ol>
+								<div class="webhook-requirement">
+									<strong>Required:</strong> Add tag <code>project:owner/repo</code> to your monitors (e.g., <code>project:acme/api</code>)
+								</div>
 							</div>
 							<div class="field">
 								<label class="field-label" for="datadog-token">Authentication Token</label>
@@ -669,6 +675,9 @@
 									<li>Create a new contact point with type <strong>Webhook</strong></li>
 									<li>Set the URL below and add header:<br/><code>Authorization: Bearer <em>your-token</em></code></li>
 								</ol>
+								<div class="webhook-requirement">
+									<strong>Required:</strong> Add label <code>project: owner/repo</code> to your alert rules (e.g., <code>project: acme/api</code>)
+								</div>
 							</div>
 							<div class="field">
 								<label class="field-label" for="grafana-token">Bearer Token</label>
@@ -1716,6 +1725,21 @@
 	.webhook-instructions em {
 		color: var(--slate);
 		font-style: normal;
+	}
+
+	.webhook-requirement {
+		margin-top: var(--space-md);
+		padding: var(--space-sm) var(--space-md);
+		background: var(--warning-soft, #FEF3C7);
+		border-radius: var(--radius-sm);
+		font-size: 0.8125rem;
+		color: var(--warning-dark, #92400E);
+		border-left: 3px solid var(--warning, #F59E0B);
+	}
+
+	.webhook-requirement code {
+		background: rgba(255,255,255,0.5);
+		border-color: var(--warning, #F59E0B);
 	}
 
 	/* Token Field */

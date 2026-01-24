@@ -393,6 +393,36 @@ pub async fn sentry_webhook(
     }))
 }
 
+/// Extract project from Sentry tags
+fn extract_project_from_sentry_tags(tags: Option<&Vec<SentryTag>>) -> Option<String> {
+    tags.and_then(|tags| {
+        // Look for explicit project/repo tags
+        for tag in tags {
+            if tag.key == "project" || tag.key == "repo" || tag.key == "repository" {
+                return Some(tag.value.clone());
+            }
+        }
+        None
+    })
+}
+
+/// Extract project from Sentry project slug (fallback)
+/// Converts "owner-repo" to "owner/repo" format
+fn extract_project_from_sentry_slug(slug: Option<&str>) -> Option<String> {
+    slug.and_then(|s| {
+        // If already contains slash, use as-is
+        if s.contains('/') {
+            return Some(s.to_string());
+        }
+        // Convert first hyphen to slash (owner-repo -> owner/repo)
+        if let Some(idx) = s.find('-') {
+            let (owner, repo) = s.split_at(idx);
+            return Some(format!("{}/{}", owner, &repo[1..]));
+        }
+        None
+    })
+}
+
 /// Convert a Sentry issue to CRISPR IngestPayload
 fn sentry_issue_to_ingest(issue: &SentryIssue) -> Result<IngestPayload, AppError> {
     // Build message from title and metadata
@@ -415,9 +445,9 @@ fn sentry_issue_to_ingest(issue: &SentryIssue) -> Result<IngestPayload, AppError
         }
     });
 
-    // Extract project info - use slug as the project identifier
-    // Users should configure project mapping in CRISPR settings
-    let project = issue.project.slug.clone().map(|s| format!("sentry/{}", s));
+    // Extract project: try slug conversion (owner-repo -> owner/repo)
+    // Issues don't have tags, so we rely on project slug naming convention
+    let project = extract_project_from_sentry_slug(issue.project.slug.as_deref());
 
     Ok(IngestPayload {
         project,
@@ -494,17 +524,9 @@ fn sentry_event_to_ingest(
         })
     });
 
-    // Get project from issue or tags
-    let project = issue.as_ref()
-        .and_then(|i| i.project.slug.clone())
-        .map(|s| format!("sentry/{}", s))
-        .or_else(|| {
-            event.tags.as_ref().and_then(|tags| {
-                tags.iter()
-                    .find(|t| t.key == "project")
-                    .map(|t| format!("sentry/{}", t.value))
-            })
-        });
+    // Get project from tags first (explicit project/repo tag), then fall back to slug
+    let project = extract_project_from_sentry_tags(event.tags.as_ref())
+        .or_else(|| issue.as_ref().and_then(|i| extract_project_from_sentry_slug(i.project.slug.as_deref())));
 
     // Parse timestamp
     let timestamp = event.timestamp.map(|ts| {
