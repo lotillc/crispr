@@ -26,10 +26,15 @@ Error Detected → LLM Triage → Context Gathering → Fix Generation → PR Cr
   - [GitHub Integration](#github-integration)
   - [Slack Integration](#slack-integration)
   - [LLM Providers](#llm-providers)
+  - [Webhook Ingestion](#webhook-ingestion)
+- [Generated Tests](#generated-tests)
+- [Error Pattern Matching](#error-pattern-matching)
 - [API Reference](#api-reference)
   - [Ingest Endpoints](#ingest-endpoints)
   - [Projects API](#projects-api)
   - [Incidents API](#incidents-api)
+  - [Generated Tests API](#generated-tests-api)
+  - [Patterns API](#patterns-api)
   - [Settings API](#settings-api)
   - [Auth API](#auth-api)
 - [UI Guide](#ui-guide)
@@ -47,12 +52,13 @@ CRISPR monitors your production logs for errors, automatically triages them usin
 
 ### How It Works
 
-1. **Ingest**: Errors are received via HTTP POST or OTLP/gRPC
+1. **Ingest**: Errors are received via HTTP POST, OTLP/gRPC, or webhooks (Sentry/Datadog)
 2. **Fingerprint**: Errors are deduplicated using SHA256 + regex normalization
-3. **Triage**: A "reader" LLM (cheap, fast) determines if the error is fixable
-4. **Context**: Relevant code files are fetched from GitHub
-5. **Fix**: A "writer" LLM (capable, expensive) generates a code fix
-6. **PR**: A pull request is created with the fix and explanation
+3. **Pattern Match**: Known error patterns are matched for auto-triage (skips LLM if matched)
+4. **Triage**: A "reader" LLM (cheap, fast) determines if the error is fixable
+5. **Context**: Relevant code files are fetched from GitHub
+6. **Fix**: A "writer" LLM (capable, expensive) generates a code fix + unit tests
+7. **PR**: A pull request is created with the fix, tests, and explanation
 
 ---
 
@@ -60,11 +66,14 @@ CRISPR monitors your production logs for errors, automatically triages them usin
 
 - **Multi-LLM Support**: Anthropic Claude, OpenAI GPT, and Ollama (local models)
 - **Reader/Writer Split**: Use cheap models for triage, expensive models for fixes
+- **Generated Tests**: Automatically generates unit tests alongside fixes to verify correctness
+- **Error Pattern Matching**: 23 built-in patterns for auto-triage without LLM calls (saves costs)
 - **Usage Tracking**: Track token usage and costs per provider and purpose
 - **GitHub Integration**: PAT or OAuth authentication, automatic PR creation
 - **Slack Notifications**: Get notified when PRs are opened or merged
 - **Web Dashboard**: Monitor incidents, configure settings, view costs
 - **OTLP Support**: Receive logs via OpenTelemetry gRPC protocol
+- **Webhook Ingestion**: Sentry and Datadog webhooks with signature verification
 - **S3 Storage**: Scale sample storage with S3, Azure Blob, GCS, or MinIO
 - **CRISPR.md Context**: Maintains a context file in each repo with fix history and service info
 - **Local Repo Clones**: Keeps repos cloned locally for faster access and offline context
@@ -304,9 +313,118 @@ OPENAI_API_KEY=sk-your-key
 2. Pull models: `ollama pull llama3.2`
 3. Configure base URL in Settings UI
 
+### Webhook Ingestion
+
+CRISPR can receive errors directly from monitoring platforms via webhooks.
+
+#### Sentry
+
+1. In Sentry, go to **Settings → Integrations → Webhooks**
+2. Add webhook URL: `http://your-crispr-server:8081/webhooks/sentry`
+3. (Optional) Set a webhook secret for signature verification
+4. Configure the secret in CRISPR:
+   ```yaml
+   webhooks:
+     sentry_secret: "your-webhook-secret"
+   ```
+
+CRISPR verifies Sentry webhook signatures using HMAC-SHA256 when a secret is configured.
+
+#### Datadog
+
+1. In Datadog, go to **Integrations → Webhooks**
+2. Create a new webhook with URL: `http://your-crispr-server:8081/webhooks/datadog`
+3. Add a `crispr_token` tag to identify the project
+4. Configure monitors to send to this webhook on error/alert
+
+---
+
+## Generated Tests
+
+CRISPR automatically generates unit tests alongside code fixes to help verify correctness and prevent regressions.
+
+### How It Works
+
+1. When a fix is generated, CRISPR also generates test code that:
+   - Verifies the fix works correctly
+   - Would have caught the original bug
+   - Uses the appropriate test framework for the language
+
+2. Tests are stored in the database and can be:
+   - Viewed in the UI on the incident detail page
+   - Included or excluded from the PR via toggle
+   - Committed alongside the fix
+
+### Supported Frameworks
+
+| Language | Test Framework |
+|----------|----------------|
+| TypeScript/JavaScript | Jest, Vitest, Mocha |
+| Python | pytest, unittest |
+| Go | go test |
+| Rust | #[test] |
+| Java | JUnit |
+
+### UI Integration
+
+On the incident detail page, expand the **Generated Tests** section to:
+- View the test code
+- Toggle "Include in PR" for each test
+- See which tests have been committed
+
+---
+
+## Error Pattern Matching
+
+CRISPR includes 23 built-in error patterns that enable auto-triage without LLM calls, reducing costs and latency.
+
+### How It Works
+
+1. When an error is received, it's matched against known patterns using regex
+2. If a pattern with `auto_triage = true` matches:
+   - The LLM triage step is skipped
+   - The pattern's `auto_fixable` setting determines if fix generation proceeds
+3. Pattern matches are tracked for analytics
+
+### Built-in Patterns
+
+| Category | Examples |
+|----------|----------|
+| Null Reference | Java NPE, Go nil pointer, JS TypeError, Python NoneType |
+| Connection | Timeouts, socket errors, pool exhaustion |
+| Authentication | HTTP 401/403, invalid token |
+| Rate Limiting | HTTP 429, quota exceeded |
+| Database | Connection failed, query timeout |
+| Memory | OOM, stack overflow |
+| Bounds | Array index, slice bounds |
+| Type Errors | Type mismatch, cast errors |
+| Import | Module not found |
+| Parsing | JSON syntax errors |
+| File System | File not found |
+| Network | HTTP 500/502/503/504, DNS resolution |
+
+### Custom Patterns
+
+Create custom patterns via the API:
+
+```bash
+curl -X POST http://localhost:8081/api/v1/patterns \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Redis Connection Error",
+    "regex_pattern": "Redis.*ECONNREFUSED|Cannot connect to Redis",
+    "category": "connection",
+    "auto_triage": true,
+    "auto_fixable": false,
+    "suggested_action": "Check Redis server status"
+  }'
+```
+
 ---
 
 ## API Reference
+
+> 📚 **Full API documentation**: See [docs/API.md](docs/API.md) for comprehensive endpoint documentation with request/response schemas and examples.
 
 ### Ingest Endpoints
 
@@ -349,6 +467,28 @@ Receive logs via OpenTelemetry OTLP protocol.
 | GET | `/api/v1/incidents/:id` | Get incident details |
 | POST | `/api/v1/incidents/:id/retry` | Retry fix generation |
 | POST | `/api/v1/incidents/:id/ignore` | Mark incident as ignored |
+
+### Generated Tests API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/incidents/:id/tests` | List generated tests for incident |
+| GET | `/api/v1/incidents/:id/tests/:test_id` | Get a specific test |
+| PATCH | `/api/v1/incidents/:id/tests/:test_id` | Update test (e.g., include_in_pr) |
+
+### Patterns API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/patterns` | List all patterns |
+| POST | `/api/v1/patterns` | Create a custom pattern |
+| GET | `/api/v1/patterns/:id` | Get pattern details |
+| PATCH | `/api/v1/patterns/:id` | Update a pattern |
+| DELETE | `/api/v1/patterns/:id` | Delete a custom pattern |
+| GET | `/api/v1/patterns/:id/stats` | Get pattern match statistics |
+| GET | `/api/v1/patterns/categories` | List pattern categories |
+| POST | `/api/v1/patterns/test` | Test a regex against sample text |
+| GET | `/api/v1/incidents/:id/pattern-matches` | Get pattern matches for incident |
 
 ### Settings API
 
@@ -584,6 +724,9 @@ crispr/
 │   │   ├── router.rs     # Route definitions
 │   │   ├── auth.rs       # OAuth flows
 │   │   ├── ingest.rs     # Error ingestion
+│   │   ├── grpc.rs       # OTLP gRPC server
+│   │   ├── webhooks.rs   # Sentry/Datadog webhooks
+│   │   ├── patterns.rs   # Error pattern API
 │   │   ├── projects.rs   # Project CRUD
 │   │   ├── incidents.rs  # Incident management
 │   │   └── settings.rs   # LLM & usage
@@ -591,11 +734,13 @@ crispr/
 │   │   ├── github.rs     # GitHub API client
 │   │   ├── slack.rs      # Slack API client
 │   │   └── llm/          # LLM providers
+│   ├── patterns/         # Error pattern matching
+│   │   └── mod.rs        # Pattern matcher with auto-triage
 │   ├── pipeline/         # Fix generation
 │   │   ├── fingerprint.rs
 │   │   ├── triage.rs
 │   │   ├── context.rs
-│   │   ├── fix.rs
+│   │   ├── fix.rs        # Fix + test generation
 │   │   ├── pr.rs
 │   │   ├── repo.rs       # Local repo management
 │   │   └── crispr_md.rs  # CRISPR.md context file
@@ -604,9 +749,15 @@ crispr/
 │       ├── object.rs
 │       └── models.rs
 ├── ui/                   # Svelte frontend
+│   └── src/lib/components/  # Reusable UI components
+├── tests/                # Integration tests
+│   ├── api_test.rs       # API endpoint tests
+│   ├── pipeline_test.rs  # Pipeline flow tests
+│   └── common/           # Test utilities and mocks
+├── docs/                 # Documentation
+│   └── API.md            # Full API reference
 ├── migrations/           # SQL migrations
 ├── config/               # YAML configs
-├── proto/                # OTLP protobuf definitions
 ├── Dockerfile
 ├── docker-compose.yaml
 └── docker-compose.dev.yaml
@@ -615,8 +766,20 @@ crispr/
 ### Running Tests
 
 ```bash
+# Run all tests (unit + integration)
 cargo test
+
+# Run only integration tests
+cargo test --test api_test --test pipeline_test
+
+# Run with output
+cargo test -- --nocapture
 ```
+
+The test suite includes:
+- **62 integration tests** covering API endpoints and pipeline flows
+- **Unit tests** inline in source modules
+- **Mock implementations** for LLM, GitHub, and Slack
 
 ### Building for Release
 
