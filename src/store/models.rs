@@ -76,6 +76,10 @@ pub struct Incident {
     pub pr_url: Option<String>,
     pub pr_number: Option<i32>,
     pub pr_state: Option<String>,
+    /// Whether tests were generated for this incident's fix
+    pub tests_generated: Option<bool>,
+    /// Number of tests generated
+    pub test_count: Option<i32>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -86,6 +90,26 @@ pub struct Sample {
     pub id: Uuid,
     pub incident_id: Uuid,
     pub payload: Vec<u8>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+// Generated test (unit test generated alongside a fix)
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct GeneratedTestRecord {
+    pub id: Uuid,
+    pub incident_id: Uuid,
+    /// Suggested test file path (e.g., "src/user.test.ts")
+    pub file_path: String,
+    /// The test source code
+    pub content: String,
+    /// Description of what the test verifies
+    pub description: Option<String>,
+    /// Test framework used (e.g., "jest", "pytest", "go test")
+    pub framework: String,
+    /// Whether the test was included in the PR
+    pub included_in_pr: Option<bool>,
+    /// SHA of the commit that included this test
+    pub commit_sha: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
 }
 
@@ -244,6 +268,10 @@ pub struct IncidentResponse {
     pub pr_url: Option<String>,
     pub pr_number: Option<i32>,
     pub pr_state: Option<String>,
+    /// Whether tests were generated for this incident's fix
+    pub tests_generated: bool,
+    /// Number of tests generated
+    pub test_count: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -265,8 +293,40 @@ impl From<Incident> for IncidentResponse {
             pr_url: i.pr_url,
             pr_number: i.pr_number,
             pr_state: i.pr_state,
+            tests_generated: i.tests_generated.unwrap_or(false),
+            test_count: i.test_count.unwrap_or(0),
             created_at: i.created_at.unwrap_or_else(Utc::now),
             updated_at: i.updated_at.unwrap_or_else(Utc::now),
+        }
+    }
+}
+
+/// Response type for generated test records
+#[derive(Debug, Serialize)]
+pub struct GeneratedTestResponse {
+    pub id: Uuid,
+    pub incident_id: Uuid,
+    pub file_path: String,
+    pub content: String,
+    pub description: Option<String>,
+    pub framework: String,
+    pub included_in_pr: bool,
+    pub commit_sha: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<GeneratedTestRecord> for GeneratedTestResponse {
+    fn from(t: GeneratedTestRecord) -> Self {
+        Self {
+            id: t.id,
+            incident_id: t.incident_id,
+            file_path: t.file_path,
+            content: t.content,
+            description: t.description,
+            framework: t.framework,
+            included_in_pr: t.included_in_pr.unwrap_or(false),
+            commit_sha: t.commit_sha,
+            created_at: t.created_at.unwrap_or_else(Utc::now),
         }
     }
 }

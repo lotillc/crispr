@@ -1,7 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { auth, llmConfig } from '$lib/stores';
+	import { auth, llmConfig, toasts } from '$lib/stores';
 	import * as api from '$lib/api';
+	import {
+		validateRequired,
+		validateUrl,
+		validateApiKey,
+		validateModel,
+		validateProvider,
+		createErrorId,
+		type ValidationResult
+	} from '$lib/validation';
 
 	// LLM Configuration
 	let readerProvider = $state('');
@@ -19,6 +28,83 @@
 	let verifyResult = $state<{ success: boolean; error?: string } | null>(null);
 	let availableModels = $state<api.LlmModel[]>([]);
 	let loadingModels = $state(false);
+
+	// Validation state - track which fields have been touched
+	let readerTouched = $state({
+		provider: false,
+		apiKey: false,
+		baseUrl: false,
+		model: false
+	});
+	let writerTouched = $state({
+		provider: false,
+		apiKey: false,
+		baseUrl: false,
+		model: false
+	});
+
+	// Save success state
+	let readerSaveSuccess = $state(false);
+	let writerSaveSuccess = $state(false);
+
+	// Derived validation states for Reader
+	let readerProviderValidation = $derived(validateProvider(readerProvider));
+	let readerApiKeyValidation = $derived(
+		readerProvider && readerProvider !== 'ollama'
+			? validateApiKey(readerApiKey, readerProvider)
+			: { valid: true }
+	);
+	// For API key, also check if we have an existing config (key already stored)
+	let readerApiKeyRequired = $derived(
+		readerProvider &&
+		readerProvider !== 'ollama' &&
+		$llmConfig?.reader_provider !== readerProvider
+	);
+	let readerBaseUrlValidation = $derived(
+		readerProvider === 'ollama'
+			? validateUrl(readerBaseUrl, false)
+			: { valid: true }
+	);
+	let readerModelValidation = $derived(validateModel(readerModel));
+
+	// Derived validation states for Writer
+	let writerProviderValidation = $derived(validateProvider(writerProvider));
+	let writerApiKeyValidation = $derived(
+		writerProvider && writerProvider !== 'ollama'
+			? validateApiKey(writerApiKey, writerProvider)
+			: { valid: true }
+	);
+	let writerApiKeyRequired = $derived(
+		writerProvider &&
+		writerProvider !== 'ollama' &&
+		$llmConfig?.writer_provider !== writerProvider
+	);
+	let writerBaseUrlValidation = $derived(
+		writerProvider === 'ollama'
+			? validateUrl(writerBaseUrl, false)
+			: { valid: true }
+	);
+	let writerModelValidation = $derived(validateModel(writerModel));
+
+	// Overall form validity
+	let readerFormValid = $derived(
+		readerProviderValidation.valid &&
+		(readerProvider === 'ollama' || !readerApiKeyRequired || readerApiKeyValidation.valid) &&
+		readerBaseUrlValidation.valid &&
+		readerModelValidation.valid
+	);
+
+	let writerFormValid = $derived(
+		writerProviderValidation.valid &&
+		(writerProvider === 'ollama' || !writerApiKeyRequired || writerApiKeyValidation.valid) &&
+		writerBaseUrlValidation.valid &&
+		writerModelValidation.valid
+	);
+
+	// Helper to show error only when touched and invalid
+	function shouldShowError(touched: boolean, validation: ValidationResult): boolean {
+		return touched && !validation.valid;
+	}
 
 	// Slack state
 	let slackChannels = $state<api.SlackChannel[]>([]);
@@ -74,8 +160,10 @@
 			const result = await api.setSlackChannel(channel.id, channel.name);
 			slackMessage = result.message;
 			await auth.load(); // Refresh auth status
+			toasts.success(`Slack channel set to #${channel.name}`);
 		} catch (e) {
 			slackMessage = (e as Error).message;
+			toasts.error(`Failed to set Slack channel: ${(e as Error).message}`);
 		}
 	}
 
@@ -85,8 +173,10 @@
 		try {
 			const result = await api.testSlackConnection();
 			slackMessage = result.message;
+			toasts.success('Test message sent to Slack');
 		} catch (e) {
 			slackMessage = (e as Error).message;
+			toasts.error(`Slack test failed: ${(e as Error).message}`);
 		} finally {
 			testingSlack = false;
 		}
@@ -99,8 +189,10 @@
 			await auth.load();
 			slackChannels = [];
 			slackMessage = '';
+			toasts.info('Slack disconnected');
 		} catch (e) {
 			console.error('Failed to disconnect Slack:', e);
+			toasts.error(`Failed to disconnect Slack: ${(e as Error).message}`);
 		} finally {
 			disconnectingSlack = false;
 		}
@@ -141,6 +233,10 @@
 
 	async function saveLlmConfig(role: 'reader' | 'writer') {
 		saving = true;
+		// Reset success states
+		if (role === 'reader') readerSaveSuccess = false;
+		else writerSaveSuccess = false;
+
 		const config = role === 'reader'
 			? { provider: readerProvider, api_key: readerApiKey || undefined, model: readerModel, base_url: readerBaseUrl || undefined, role: 'reader' as const }
 			: { provider: writerProvider, api_key: writerApiKey || undefined, model: writerModel, base_url: writerBaseUrl || undefined, role: 'writer' as const };
@@ -148,13 +244,42 @@
 		try {
 			await llmConfig.update(config);
 			// Clear API key field after save (it's stored securely)
-			if (role === 'reader') readerApiKey = '';
-			else writerApiKey = '';
+			if (role === 'reader') {
+				readerApiKey = '';
+				readerSaveSuccess = true;
+				// Clear success after 3 seconds
+				setTimeout(() => { readerSaveSuccess = false; }, 3000);
+			} else {
+				writerApiKey = '';
+				writerSaveSuccess = true;
+				setTimeout(() => { writerSaveSuccess = false; }, 3000);
+			}
+			toasts.success(`${role === 'reader' ? 'Reader' : 'Writer'} LLM configuration saved`);
 		} catch (e) {
 			console.error('Failed to save LLM config:', e);
+			toasts.error(`Failed to save LLM config: ${(e as Error).message}`);
 		} finally {
 			saving = false;
 		}
+	}
+
+	// Mark all fields as touched for validation display
+	function touchAllReaderFields() {
+		readerTouched = {
+			provider: true,
+			apiKey: true,
+			baseUrl: true,
+			model: true
+		};
+	}
+
+	function touchAllWriterFields() {
+		writerTouched = {
+			provider: true,
+			apiKey: true,
+			baseUrl: true,
+			model: true
+		};
 	}
 </script>
 
@@ -239,12 +364,12 @@
 				{#if $auth?.slack?.connected}
 					<div class="slack-config">
 						<div class="channel-selector">
-							<span class="channel-label">Notification Channel</span>
+							<label class="channel-label" for="slack-channel-select" id="slack-channel-label">Notification Channel</label>
 							<div class="channel-controls">
 								{#if loadingChannels}
-									<span class="loading-text">Loading channels...</span>
+									<span class="loading-text" role="status">Loading channels...</span>
 								{:else}
-									<select bind:value={selectedChannel} class="channel-select">
+									<select id="slack-channel-select" bind:value={selectedChannel} class="channel-select" aria-labelledby="slack-channel-label">
 										<option value="">
 											{$auth.slack.channel_name ? `#${$auth.slack.channel_name}` : 'Select channel...'}
 										</option>
@@ -258,6 +383,7 @@
 										class="btn btn-secondary"
 										onclick={setSlackChannel}
 										disabled={!selectedChannel}
+										aria-label="Set selected Slack channel for notifications"
 									>
 										Set Channel
 									</button>
@@ -271,6 +397,7 @@
 									class="btn btn-ghost"
 									onclick={testSlack}
 									disabled={testingSlack}
+									aria-label="Send test message to Slack channel"
 								>
 									{testingSlack ? 'Sending...' : 'Send Test Message'}
 								</button>
@@ -278,6 +405,7 @@
 									class="btn btn-ghost disconnect"
 									onclick={disconnectSlack}
 									disabled={disconnectingSlack}
+									aria-label="Disconnect Slack integration"
 								>
 									{disconnectingSlack ? 'Disconnecting...' : 'Disconnect'}
 								</button>
@@ -312,12 +440,25 @@
 				<div class="llm-form">
 					<div class="field">
 						<label class="field-label" for="reader-provider">Provider</label>
-						<select id="reader-provider" bind:value={readerProvider} class="field-select">
+						<select
+							id="reader-provider"
+							bind:value={readerProvider}
+							class="field-select"
+							class:field-invalid={shouldShowError(readerTouched.provider, readerProviderValidation)}
+							aria-invalid={shouldShowError(readerTouched.provider, readerProviderValidation)}
+							aria-describedby={shouldShowError(readerTouched.provider, readerProviderValidation) ? 'reader-provider-error' : undefined}
+							onblur={() => readerTouched.provider = true}
+						>
 							<option value="">Select provider...</option>
 							{#each providers as p}
 								<option value={p.value}>{p.label}</option>
 							{/each}
 						</select>
+						{#if shouldShowError(readerTouched.provider, readerProviderValidation)}
+							<span id="reader-provider-error" class="field-error" role="alert">
+								{readerProviderValidation.error}
+							</span>
+						{/if}
 					</div>
 
 					{#if readerProvider === 'ollama'}
@@ -329,18 +470,41 @@
 								bind:value={readerBaseUrl}
 								placeholder="http://localhost:11434"
 								class="field-input"
+								class:field-invalid={shouldShowError(readerTouched.baseUrl, readerBaseUrlValidation)}
+								aria-invalid={shouldShowError(readerTouched.baseUrl, readerBaseUrlValidation)}
+								aria-describedby={shouldShowError(readerTouched.baseUrl, readerBaseUrlValidation) ? 'reader-baseurl-error' : undefined}
+								onblur={() => readerTouched.baseUrl = true}
 							/>
+							{#if shouldShowError(readerTouched.baseUrl, readerBaseUrlValidation)}
+								<span id="reader-baseurl-error" class="field-error" role="alert">
+									{readerBaseUrlValidation.error}
+								</span>
+							{/if}
 						</div>
 					{:else if readerProvider}
 						<div class="field">
-							<label class="field-label" for="reader-apikey">API Key</label>
+							<label class="field-label" for="reader-apikey">
+								API Key
+								{#if $llmConfig?.reader_provider === readerProvider}
+									<span class="field-hint-inline">(already configured)</span>
+								{/if}
+							</label>
 							<input
 								id="reader-apikey"
 								type="password"
 								bind:value={readerApiKey}
 								placeholder={$llmConfig?.reader_provider === readerProvider ? '••••••••' : 'Enter API key'}
 								class="field-input"
+								class:field-invalid={shouldShowError(readerTouched.apiKey, readerApiKeyValidation) && readerApiKeyRequired}
+								aria-invalid={shouldShowError(readerTouched.apiKey, readerApiKeyValidation) && readerApiKeyRequired}
+								aria-describedby={shouldShowError(readerTouched.apiKey, readerApiKeyValidation) && readerApiKeyRequired ? 'reader-apikey-error' : undefined}
+								onblur={() => readerTouched.apiKey = true}
 							/>
+							{#if shouldShowError(readerTouched.apiKey, readerApiKeyValidation) && readerApiKeyRequired}
+								<span id="reader-apikey-error" class="field-error" role="alert">
+									{readerApiKeyValidation.error}
+								</span>
+							{/if}
 						</div>
 					{/if}
 
@@ -354,21 +518,37 @@
 									bind:value={readerModel}
 									placeholder="e.g., claude-3-haiku-20240307"
 									class="field-input"
+									class:field-invalid={shouldShowError(readerTouched.model, readerModelValidation)}
+									aria-invalid={shouldShowError(readerTouched.model, readerModelValidation)}
+									aria-describedby={shouldShowError(readerTouched.model, readerModelValidation) ? 'reader-model-error' : undefined}
+									onblur={() => readerTouched.model = true}
 								/>
 								<button
 									class="btn btn-ghost"
 									onclick={() => loadModels('reader')}
 									disabled={loadingModels}
+									aria-label="Load available models for reader LLM"
 								>
 									{loadingModels ? 'Loading...' : 'List Models'}
 								</button>
 							</div>
+							{#if shouldShowError(readerTouched.model, readerModelValidation)}
+								<span id="reader-model-error" class="field-error" role="alert">
+									{readerModelValidation.error}
+								</span>
+							{/if}
 						</div>
 					{/if}
 
 					{#if verifyResult && verifying === null}
 						<div class="verify-result" class:success={verifyResult.success}>
 							{verifyResult.success ? 'Connection verified!' : verifyResult.error}
+						</div>
+					{/if}
+
+					{#if readerSaveSuccess}
+						<div class="save-success" role="status">
+							Configuration saved successfully!
 						</div>
 					{/if}
 
@@ -382,8 +562,11 @@
 						</button>
 						<button
 							class="btn btn-primary"
-							onclick={() => saveLlmConfig('reader')}
-							disabled={!readerProvider || !readerModel || saving}
+							onclick={() => {
+								touchAllReaderFields();
+								if (readerFormValid) saveLlmConfig('reader');
+							}}
+							disabled={!readerFormValid || saving}
 						>
 							{saving ? 'Saving...' : 'Save Reader'}
 						</button>
@@ -404,12 +587,25 @@
 				<div class="llm-form">
 					<div class="field">
 						<label class="field-label" for="writer-provider">Provider</label>
-						<select id="writer-provider" bind:value={writerProvider} class="field-select">
+						<select
+							id="writer-provider"
+							bind:value={writerProvider}
+							class="field-select"
+							class:field-invalid={shouldShowError(writerTouched.provider, writerProviderValidation)}
+							aria-invalid={shouldShowError(writerTouched.provider, writerProviderValidation)}
+							aria-describedby={shouldShowError(writerTouched.provider, writerProviderValidation) ? 'writer-provider-error' : undefined}
+							onblur={() => writerTouched.provider = true}
+						>
 							<option value="">Select provider...</option>
 							{#each providers as p}
 								<option value={p.value}>{p.label}</option>
 							{/each}
 						</select>
+						{#if shouldShowError(writerTouched.provider, writerProviderValidation)}
+							<span id="writer-provider-error" class="field-error" role="alert">
+								{writerProviderValidation.error}
+							</span>
+						{/if}
 					</div>
 
 					{#if writerProvider === 'ollama'}
@@ -421,18 +617,41 @@
 								bind:value={writerBaseUrl}
 								placeholder="http://localhost:11434"
 								class="field-input"
+								class:field-invalid={shouldShowError(writerTouched.baseUrl, writerBaseUrlValidation)}
+								aria-invalid={shouldShowError(writerTouched.baseUrl, writerBaseUrlValidation)}
+								aria-describedby={shouldShowError(writerTouched.baseUrl, writerBaseUrlValidation) ? 'writer-baseurl-error' : undefined}
+								onblur={() => writerTouched.baseUrl = true}
 							/>
+							{#if shouldShowError(writerTouched.baseUrl, writerBaseUrlValidation)}
+								<span id="writer-baseurl-error" class="field-error" role="alert">
+									{writerBaseUrlValidation.error}
+								</span>
+							{/if}
 						</div>
 					{:else if writerProvider}
 						<div class="field">
-							<label class="field-label" for="writer-apikey">API Key</label>
+							<label class="field-label" for="writer-apikey">
+								API Key
+								{#if $llmConfig?.writer_provider === writerProvider}
+									<span class="field-hint-inline">(already configured)</span>
+								{/if}
+							</label>
 							<input
 								id="writer-apikey"
 								type="password"
 								bind:value={writerApiKey}
 								placeholder={$llmConfig?.writer_provider === writerProvider ? '••••••••' : 'Enter API key'}
 								class="field-input"
+								class:field-invalid={shouldShowError(writerTouched.apiKey, writerApiKeyValidation) && writerApiKeyRequired}
+								aria-invalid={shouldShowError(writerTouched.apiKey, writerApiKeyValidation) && writerApiKeyRequired}
+								aria-describedby={shouldShowError(writerTouched.apiKey, writerApiKeyValidation) && writerApiKeyRequired ? 'writer-apikey-error' : undefined}
+								onblur={() => writerTouched.apiKey = true}
 							/>
+							{#if shouldShowError(writerTouched.apiKey, writerApiKeyValidation) && writerApiKeyRequired}
+								<span id="writer-apikey-error" class="field-error" role="alert">
+									{writerApiKeyValidation.error}
+								</span>
+							{/if}
 						</div>
 					{/if}
 
@@ -446,15 +665,31 @@
 									bind:value={writerModel}
 									placeholder="e.g., claude-3-5-sonnet-20241022"
 									class="field-input"
+									class:field-invalid={shouldShowError(writerTouched.model, writerModelValidation)}
+									aria-invalid={shouldShowError(writerTouched.model, writerModelValidation)}
+									aria-describedby={shouldShowError(writerTouched.model, writerModelValidation) ? 'writer-model-error' : undefined}
+									onblur={() => writerTouched.model = true}
 								/>
 								<button
 									class="btn btn-ghost"
 									onclick={() => loadModels('writer')}
 									disabled={loadingModels}
+									aria-label="Load available models for writer LLM"
 								>
 									{loadingModels ? 'Loading...' : 'List Models'}
 								</button>
 							</div>
+							{#if shouldShowError(writerTouched.model, writerModelValidation)}
+								<span id="writer-model-error" class="field-error" role="alert">
+									{writerModelValidation.error}
+								</span>
+							{/if}
+						</div>
+					{/if}
+
+					{#if writerSaveSuccess}
+						<div class="save-success" role="status">
+							Configuration saved successfully!
 						</div>
 					{/if}
 
@@ -468,8 +703,11 @@
 						</button>
 						<button
 							class="btn btn-primary"
-							onclick={() => saveLlmConfig('writer')}
-							disabled={!writerProvider || !writerModel || saving}
+							onclick={() => {
+								touchAllWriterFields();
+								if (writerFormValid) saveLlmConfig('writer');
+							}}
+							disabled={!writerFormValid || saving}
 						>
 							{saving ? 'Saving...' : 'Save Writer'}
 						</button>
@@ -967,5 +1205,59 @@
 			align-items: flex-start;
 			gap: var(--space-xs);
 		}
+	}
+
+	/* Validation Styles */
+	.field-invalid {
+		border-color: var(--critical) !important;
+		background-color: var(--critical-soft) !important;
+	}
+
+	.field-invalid:focus {
+		box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2) !important;
+		border-color: var(--critical) !important;
+	}
+
+	.field-error {
+		display: block;
+		font-size: 0.75rem;
+		color: var(--critical);
+		margin-top: var(--space-xs);
+		line-height: 1.4;
+	}
+
+	.field-hint-inline {
+		font-weight: 400;
+		font-size: 0.75rem;
+		color: var(--slate);
+		margin-left: var(--space-xs);
+	}
+
+	.save-success {
+		padding: var(--space-sm) var(--space-md);
+		border-radius: var(--radius-md);
+		font-size: 0.8125rem;
+		background: var(--scrubs-soft);
+		color: var(--scrubs-dark);
+		animation: fadeIn var(--transition-fast) ease-out;
+	}
+
+	@keyframes fadeIn {
+		from { opacity: 0; transform: translateY(-4px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
+	/* Disabled button styling */
+	.btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.btn-primary:disabled {
+		background: var(--slate);
+	}
+
+	.btn-primary:disabled:hover {
+		background: var(--slate);
 	}
 </style>

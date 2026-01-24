@@ -2,6 +2,12 @@
 	import { onMount } from 'svelte';
 	import { usage, projects } from '$lib/stores';
 	import * as api from '$lib/api';
+	import Breadcrumb from '$lib/components/Breadcrumb.svelte';
+
+	const breadcrumbItems = [
+		{ label: 'Surgery Board', href: '/' },
+		{ label: 'Costs', href: '/costs' }
+	];
 
 	let usageDetails = $state<Awaited<ReturnType<typeof api.getUsageDetails>>>([]);
 	let projectStats = $state<Map<string, api.ProjectStats>>(new Map());
@@ -103,27 +109,33 @@
 </svelte:head>
 
 <div class="costs-page">
+	<!-- Breadcrumb Navigation -->
+	<Breadcrumb items={breadcrumbItems} />
+
 	<header class="page-header">
 		<div class="header-content">
 			<h1>Administration</h1>
 			<p class="page-subtitle">Surgery costs and resource utilization</p>
 		</div>
 
-		<div class="time-selector">
+		<div class="time-selector" role="group" aria-label="Time range selection">
 			<button
 				class="time-btn"
 				class:active={timeRange === '7d'}
 				onclick={() => timeRange = '7d'}
+				aria-pressed={timeRange === '7d'}
 			>7 days</button>
 			<button
 				class="time-btn"
 				class:active={timeRange === '30d'}
 				onclick={() => timeRange = '30d'}
+				aria-pressed={timeRange === '30d'}
 			>30 days</button>
 			<button
 				class="time-btn"
 				class:active={timeRange === '90d'}
 				onclick={() => timeRange = '90d'}
+				aria-pressed={timeRange === '90d'}
 			>90 days</button>
 		</div>
 	</header>
@@ -251,20 +263,20 @@
 
 	<!-- Usage Details Table -->
 	{#if usageDetails.length > 0}
-		<section class="details-section">
-			<h2>Usage Details</h2>
+		<section class="details-section" aria-label="Usage details">
+			<h2 id="usage-details-heading">Usage Details</h2>
 			<div class="table-wrapper">
-				<table class="details-table">
+				<table class="details-table" aria-labelledby="usage-details-heading">
 					<thead>
 						<tr>
-							<th>Date</th>
-							<th>Provider</th>
-							<th>Model</th>
-							<th>Purpose</th>
-							<th>Requests</th>
-							<th>Input Tokens</th>
-							<th>Output Tokens</th>
-							<th>Cost</th>
+							<th scope="col">Date</th>
+							<th scope="col">Provider</th>
+							<th scope="col">Model</th>
+							<th scope="col">Purpose</th>
+							<th scope="col">Requests</th>
+							<th scope="col">Input Tokens</th>
+							<th scope="col">Output Tokens</th>
+							<th scope="col">Cost</th>
 						</tr>
 					</thead>
 					<tbody>

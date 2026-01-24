@@ -651,3 +651,7 @@ if (typeof window !== 'undefined') {
 		}
 	}, 100);
 }
+
+// Re-export toast store
+export { toasts } from './toast';
+export type { Toast, ToastType } from './toast';

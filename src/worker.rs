@@ -181,7 +181,7 @@ impl Worker {
             SELECT id, project_id, fingerprint, title, state, severity,
                    occurrence_count, first_seen, last_seen, cooldown_until,
                    sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                   created_at, updated_at
+                   tests_generated, test_count, created_at, updated_at
             FROM incidents
             WHERE state = 'detected'
             AND (cooldown_until IS NULL OR cooldown_until < NOW())
@@ -425,12 +425,25 @@ impl Worker {
         let generated_fix = fix::generate(&writer, &context, incident.id, project.id).await?;
         fix_timer.stop();
 
-        info!(
-            incident_id = %incident.id,
-            changes_count = generated_fix.changes.len(),
-            confidence = generated_fix.confidence,
-            "Fix generated"
-        );
+        // Log fix details including multi-file information
+        if generated_fix.is_multi_file() {
+            info!(
+                incident_id = %incident.id,
+                changes_count = generated_fix.file_count(),
+                files = ?generated_fix.affected_files(),
+                confidence = generated_fix.confidence,
+                tests_generated = generated_fix.test_count(),
+                "Multi-file fix generated"
+            );
+        } else {
+            info!(
+                incident_id = %incident.id,
+                changes_count = generated_fix.file_count(),
+                confidence = generated_fix.confidence,
+                tests_generated = generated_fix.test_count(),
+                "Fix generated"
+            );
+        }
 
         // === PR CREATION ===
         set_state(&self.state, incident.id, "pr_opening").await?;
@@ -441,6 +454,10 @@ impl Worker {
             "creating_pr",
             &serde_json::json!({
                 "changes": generated_fix.changes.iter().map(|c| &c.path).collect::<Vec<_>>(),
+                "is_multi_file": generated_fix.is_multi_file(),
+                "file_count": generated_fix.file_count(),
+                "test_count": generated_fix.test_count(),
+                "confidence": generated_fix.confidence,
             }),
         )
         .await?;

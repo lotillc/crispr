@@ -8,7 +8,7 @@ pub mod triage;
 
 pub use context::FixContext;
 pub use crispr_md::{CrisprContext, CrisprMdManager, FixRecord};
-pub use fix::GeneratedFix;
+pub use fix::{FileChange, GeneratedFix, GeneratedTest, derive_test_file_path};
 pub use pr::PrResult;
 pub use repo::RepoManager;
 pub use triage::TriageResult;

@@ -44,7 +44,7 @@ pub async fn list(
                 SELECT id, project_id, fingerprint, title, state, severity,
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                       created_at, updated_at
+                       tests_generated, test_count, created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1 AND state = $2
                 ORDER BY last_seen DESC
@@ -76,7 +76,7 @@ pub async fn list(
                 SELECT id, project_id, fingerprint, title, state, severity,
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                       created_at, updated_at
+                       tests_generated, test_count, created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1
                 ORDER BY last_seen DESC
@@ -106,7 +106,7 @@ pub async fn list(
                 SELECT id, project_id, fingerprint, title, state, severity,
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                       created_at, updated_at
+                       tests_generated, test_count, created_at, updated_at
                 FROM incidents
                 WHERE state = $1
                 ORDER BY last_seen DESC
@@ -136,7 +136,7 @@ pub async fn list(
                 SELECT id, project_id, fingerprint, title, state, severity,
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                       created_at, updated_at
+                       tests_generated, test_count, created_at, updated_at
                 FROM incidents
                 ORDER BY last_seen DESC
                 LIMIT $1 OFFSET $2
@@ -196,7 +196,7 @@ pub async fn get(
         SELECT id, project_id, fingerprint, title, state, severity,
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
-               created_at, updated_at
+               tests_generated, test_count, created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
         id
@@ -269,7 +269,7 @@ pub async fn retry(
         SELECT id, project_id, fingerprint, title, state, severity,
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
-               created_at, updated_at
+               tests_generated, test_count, created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
         id
@@ -301,7 +301,7 @@ pub async fn retry(
         RETURNING id, project_id, fingerprint, title, state, severity,
                   occurrence_count, first_seen, last_seen, cooldown_until,
                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                  created_at, updated_at
+                  tests_generated, test_count, created_at, updated_at
         "#,
         id
     )
@@ -335,7 +335,7 @@ pub async fn ignore(
         SELECT id, project_id, fingerprint, title, state, severity,
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
-               created_at, updated_at
+               tests_generated, test_count, created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
         id
@@ -354,7 +354,7 @@ pub async fn ignore(
         RETURNING id, project_id, fingerprint, title, state, severity,
                   occurrence_count, first_seen, last_seen, cooldown_until,
                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                  created_at, updated_at
+                  tests_generated, test_count, created_at, updated_at
         "#,
         id
     )

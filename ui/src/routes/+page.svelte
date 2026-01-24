@@ -1,11 +1,37 @@
 <script lang="ts">
-	import { projects, incidents, stats, activeIncidents, pendingPRs } from '$lib/stores';
+	import { projects, incidents, stats, activeIncidents, pendingPRs, toasts } from '$lib/stores';
 	import type { Project, Incident } from '$lib/api';
+	import { validateRepoName } from '$lib/validation';
 
 	let activeTab = $state<'patients' | 'services'>('patients');
 	let showAddService = $state(false);
 	let newServiceRepo = $state('');
 	let addingService = $state(false);
+
+	// Pagination state for discharged section
+	let dischargedPageSize = $state(5);
+	let dischargedExpanded = $state(false);
+
+	// Loading states for toggle buttons
+	let togglingWatchLogs = $state<string | null>(null);
+	let togglingAutoFix = $state<string | null>(null);
+
+	// Validation state for Add Service modal
+	let repoTouched = $state(false);
+	let repoValidation = $derived(validateRepoName(newServiceRepo));
+	let repoFormValid = $derived(repoValidation.valid);
+
+	// Helper to check if we should show the error
+	function shouldShowRepoError(): boolean {
+		return repoTouched && !repoValidation.valid;
+	}
+
+	// Reset validation state when modal closes
+	function closeAddServiceModal() {
+		showAddService = false;
+		repoTouched = false;
+		newServiceRepo = '';
+	}
 
 	// Group incidents by stage for kanban board
 	let triageQueue = $derived(
@@ -20,9 +46,15 @@
 		$incidents.filter(i => i.status === 'pr_open')
 	);
 
-	let discharged = $derived(
-		$incidents.filter(i => i.status === 'pr_merged').slice(0, 10)
+	let allDischarged = $derived(
+		$incidents.filter(i => i.status === 'pr_merged')
 	);
+
+	let discharged = $derived(
+		dischargedExpanded ? allDischarged : allDischarged.slice(0, dischargedPageSize)
+	);
+
+	let hasMoreDischarged = $derived(allDischarged.length > dischargedPageSize);
 
 	let needsAttention = $derived(
 		$incidents.filter(i => i.status === 'unfixable' || i.status === 'max_attempts')
@@ -84,14 +116,20 @@
 	}
 
 	async function handleAddService() {
-		if (!newServiceRepo.trim()) return;
+		// Touch the field to show validation errors
+		repoTouched = true;
+
+		// Don't proceed if validation fails
+		if (!repoFormValid) return;
+
 		addingService = true;
 		try {
 			await projects.create(newServiceRepo.trim());
-			newServiceRepo = '';
-			showAddService = false;
+			toasts.success(`Service "${newServiceRepo.trim()}" added successfully`);
+			closeAddServiceModal();
 		} catch (e) {
 			console.error('Failed to add service:', e);
+			toasts.error(`Failed to add service: ${(e as Error).message}`);
 		} finally {
 			addingService = false;
 		}
@@ -100,13 +138,27 @@
 	async function toggleWatchLogs(project: Project, e: Event) {
 		e.preventDefault();
 		e.stopPropagation();
-		await projects.update(project.id, { watch_logs: !project.watch_logs });
+		togglingWatchLogs = project.id;
+		try {
+			await projects.update(project.id, { watch_logs: !project.watch_logs });
+		} finally {
+			togglingWatchLogs = null;
+		}
 	}
 
 	async function toggleAutoFix(project: Project, e: Event) {
 		e.preventDefault();
 		e.stopPropagation();
-		await projects.update(project.id, { auto_fix: !project.auto_fix });
+		togglingAutoFix = project.id;
+		try {
+			await projects.update(project.id, { auto_fix: !project.auto_fix });
+		} finally {
+			togglingAutoFix = null;
+		}
+	}
+
+	function toggleDischargedExpanded() {
+		dischargedExpanded = !dischargedExpanded;
 	}
 </script>
 
@@ -165,6 +217,13 @@
 
 	<!-- Patients Tab: Kanban Board -->
 	{#if activeTab === 'patients'}
+		<!-- Mobile swipe hint -->
+		<div class="kanban-swipe-hint">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+			</svg>
+			<span>Swipe to see more columns</span>
+		</div>
 		<div class="kanban-board">
 			<!-- Triage Column -->
 			<div class="kanban-column">
@@ -296,9 +355,12 @@
 		</div>
 
 		<!-- Recently Discharged -->
-		{#if discharged.length > 0}
+		{#if allDischarged.length > 0}
 			<section class="discharged-section">
-				<h3>Recently Discharged</h3>
+				<div class="discharged-header">
+					<h3>Recently Discharged</h3>
+					<span class="discharged-count">{allDischarged.length} total</span>
+				</div>
 				<div class="discharged-list">
 					{#each discharged as incident (incident.id)}
 						<div class="discharged-item">
@@ -308,6 +370,23 @@
 						</div>
 					{/each}
 				</div>
+				{#if hasMoreDischarged}
+					<div class="discharged-actions">
+						<button class="btn btn-ghost" onclick={toggleDischargedExpanded}>
+							{#if dischargedExpanded}
+								<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+									<path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd"/>
+								</svg>
+								Show less
+							{:else}
+								<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+									<path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+								</svg>
+								Show more ({allDischarged.length - dischargedPageSize} more)
+							{/if}
+						</button>
+					</div>
+				{/if}
 			</section>
 		{/if}
 	{/if}
@@ -372,23 +451,35 @@
 								<button
 									class="control-btn"
 									class:active={project.watch_logs}
+									class:loading={togglingWatchLogs === project.id}
 									onclick={(e) => toggleWatchLogs(project, e)}
-									title={project.watch_logs ? 'Monitoring active' : 'Monitoring paused'}
+									disabled={togglingWatchLogs === project.id}
+									data-tooltip={project.watch_logs ? 'Click to pause log monitoring' : 'Click to start monitoring logs for errors'}
 								>
-									<svg viewBox="0 0 20 20" fill="currentColor">
-										<path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
-										<path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
-									</svg>
+									{#if togglingWatchLogs === project.id}
+										<span class="btn-spinner"></span>
+									{:else}
+										<svg viewBox="0 0 20 20" fill="currentColor">
+											<path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+											<path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+										</svg>
+									{/if}
 								</button>
 								<button
 									class="control-btn"
 									class:active={project.auto_fix}
+									class:loading={togglingAutoFix === project.id}
 									onclick={(e) => toggleAutoFix(project, e)}
-									title={project.auto_fix ? 'Auto-fix enabled' : 'Auto-fix disabled'}
+									disabled={togglingAutoFix === project.id}
+									data-tooltip={project.auto_fix ? 'Click to disable automatic fixes' : 'Click to enable automatic PR creation for fixes'}
 								>
-									<svg viewBox="0 0 20 20" fill="currentColor">
-										<path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/>
-									</svg>
+									{#if togglingAutoFix === project.id}
+										<span class="btn-spinner"></span>
+									{:else}
+										<svg viewBox="0 0 20 20" fill="currentColor">
+											<path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/>
+										</svg>
+									{/if}
 								</button>
 							</div>
 						</a>
@@ -401,11 +492,11 @@
 
 <!-- Add Service Modal -->
 {#if showAddService}
-	<div class="modal-overlay" onclick={() => showAddService = false}>
+	<div class="modal-overlay" onclick={closeAddServiceModal}>
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
 			<div class="modal-header">
 				<h3>Add New Service</h3>
-				<button class="modal-close" onclick={() => showAddService = false}>
+				<button class="modal-close" onclick={closeAddServiceModal}>
 					<svg viewBox="0 0 20 20" fill="currentColor">
 						<path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
 					</svg>
@@ -419,13 +510,28 @@
 						placeholder="owner/repository"
 						bind:value={newServiceRepo}
 						class="field-input"
+						class:field-invalid={shouldShowRepoError()}
+						aria-invalid={shouldShowRepoError()}
+						aria-describedby={shouldShowRepoError() ? 'repo-error' : undefined}
+						onblur={() => repoTouched = true}
+						onkeydown={(e) => { if (e.key === 'Enter') handleAddService(); }}
 					/>
-					<span class="field-hint">Enter the full repository path (e.g., acme/api-server)</span>
+					{#if shouldShowRepoError()}
+						<span id="repo-error" class="field-error" role="alert">
+							{repoValidation.error}
+						</span>
+					{:else}
+						<span class="field-hint">Enter the full repository path (e.g., acme/api-server)</span>
+					{/if}
 				</label>
 			</div>
 			<div class="modal-footer">
-				<button class="btn btn-secondary" onclick={() => showAddService = false}>Cancel</button>
-				<button class="btn btn-primary" onclick={handleAddService} disabled={addingService || !newServiceRepo.trim()}>
+				<button class="btn btn-secondary" onclick={closeAddServiceModal}>Cancel</button>
+				<button
+					class="btn btn-primary"
+					onclick={handleAddService}
+					disabled={addingService || !repoFormValid}
+				>
 					{addingService ? 'Adding...' : 'Add Service'}
 				</button>
 			</div>
@@ -531,6 +637,27 @@
 	.tab-count {
 		font-size: 0.75rem;
 		color: var(--slate);
+	}
+
+	/* Mobile swipe hint */
+	.kanban-swipe-hint {
+		display: none;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		background: var(--vitals-soft);
+		border-radius: var(--radius-md);
+		margin-bottom: var(--space-md);
+		color: var(--vitals);
+		font-size: 0.8125rem;
+		font-weight: 500;
+	}
+
+	.kanban-swipe-hint svg {
+		width: 20px;
+		height: 20px;
+		transform: rotate(90deg);
 	}
 
 	/* Kanban Board */
@@ -762,11 +889,37 @@
 		padding: var(--space-lg);
 	}
 
+	.discharged-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: var(--space-md);
+	}
+
 	.discharged-section h3 {
 		font-size: 0.875rem;
 		font-weight: 600;
 		color: var(--graphite);
-		margin-bottom: var(--space-md);
+		margin: 0;
+	}
+
+	.discharged-count {
+		font-size: 0.75rem;
+		color: var(--slate);
+	}
+
+	.discharged-actions {
+		display: flex;
+		justify-content: center;
+		margin-top: var(--space-md);
+		padding-top: var(--space-md);
+		border-top: 1px solid var(--paper);
+	}
+
+	.discharged-actions .btn {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
 	}
 
 	.discharged-list {
@@ -968,6 +1121,77 @@
 		height: 14px;
 	}
 
+	.control-btn.loading {
+		pointer-events: none;
+		opacity: 0.7;
+	}
+
+	/* Button spinner */
+	.btn-spinner {
+		width: 14px;
+		height: 14px;
+		border: 2px solid var(--silver);
+		border-top-color: var(--scrubs);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	/* Tooltip styles */
+	[data-tooltip] {
+		position: relative;
+	}
+
+	[data-tooltip]::before {
+		content: attr(data-tooltip);
+		position: absolute;
+		bottom: calc(100% + 8px);
+		left: 50%;
+		transform: translateX(-50%);
+		padding: var(--space-xs) var(--space-sm);
+		background: var(--obsidian);
+		color: var(--white);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		white-space: nowrap;
+		border-radius: var(--radius-sm);
+		opacity: 0;
+		visibility: hidden;
+		transition: opacity var(--transition-fast), visibility var(--transition-fast);
+		z-index: 100;
+		pointer-events: none;
+		max-width: 200px;
+		white-space: normal;
+		text-align: center;
+		line-height: 1.4;
+	}
+
+	[data-tooltip]::after {
+		content: '';
+		position: absolute;
+		bottom: calc(100% + 4px);
+		left: 50%;
+		transform: translateX(-50%);
+		border: 4px solid transparent;
+		border-top-color: var(--obsidian);
+		opacity: 0;
+		visibility: hidden;
+		transition: opacity var(--transition-fast), visibility var(--transition-fast);
+		z-index: 100;
+		pointer-events: none;
+	}
+
+	[data-tooltip]:hover::before,
+	[data-tooltip]:hover::after,
+	[data-tooltip]:focus::before,
+	[data-tooltip]:focus::after {
+		opacity: 1;
+		visibility: visible;
+	}
+
 	/* Badge variants */
 	.badge-healthy {
 		background: var(--scrubs-soft);
@@ -1078,6 +1302,38 @@
 		color: var(--slate);
 	}
 
+	/* Validation Styles */
+	.field-invalid {
+		border-color: var(--critical) !important;
+		background-color: var(--critical-soft) !important;
+	}
+
+	.field-invalid:focus {
+		box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2) !important;
+		border-color: var(--critical) !important;
+	}
+
+	.field-error {
+		display: block;
+		font-size: 0.75rem;
+		color: var(--critical);
+		line-height: 1.4;
+	}
+
+	/* Disabled button styling */
+	.btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.btn-primary:disabled {
+		background: var(--slate);
+	}
+
+	.btn-primary:disabled:hover {
+		background: var(--slate);
+	}
+
 	@media (max-width: 768px) {
 		.hud {
 			grid-template-columns: repeat(2, 1fr);
@@ -1093,6 +1349,11 @@
 
 		.hud-label {
 			font-size: 0.6875rem;
+		}
+
+		/* Show swipe hint on mobile */
+		.kanban-swipe-hint {
+			display: flex;
 		}
 
 		/* Horizontal scroll kanban on mobile */
@@ -1115,12 +1376,31 @@
 			min-height: 300px;
 		}
 
+		/* Sticky column headers on mobile */
+		.column-header {
+			position: sticky;
+			top: 0;
+			z-index: 10;
+			background: inherit;
+		}
+
 		.column-cards {
 			max-height: 400px;
 		}
 
+		/* Improved card content on mobile - show more text */
+		.patient-message {
+			-webkit-line-clamp: 3;
+		}
+
 		.patient-card {
 			min-height: 44px;
+		}
+
+		/* Hide tooltips on touch devices */
+		[data-tooltip]::before,
+		[data-tooltip]::after {
+			display: none;
 		}
 
 		.service-grid {

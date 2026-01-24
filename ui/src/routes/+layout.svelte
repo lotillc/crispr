@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { projects, incidents, stats, auth, demoMode, theme } from '$lib/stores';
+	import Toast from '$lib/components/Toast.svelte';
 
 	let { children } = $props();
 
@@ -61,10 +62,13 @@
 </script>
 
 <div class="app">
+	<!-- Skip to content link for keyboard navigation -->
+	<a href="#main-content" class="skip-link">Skip to main content</a>
+
 	<!-- Top Bar -->
 	<header class="top-bar">
 		<div class="logo">
-			<svg class="logo-icon" viewBox="0 0 32 32" fill="none">
+			<svg class="logo-icon" viewBox="0 0 32 32" fill="none" aria-hidden="true">
 				<rect x="2" y="8" width="28" height="16" rx="3" stroke="currentColor" stroke-width="2"/>
 				<path d="M8 14h16M8 18h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
 				<circle cx="24" cy="12" r="1.5" fill="currentColor"/>
@@ -79,41 +83,43 @@
 			onclick={toggleMobileMenu}
 			aria-label="Toggle navigation menu"
 			aria-expanded={mobileMenuOpen}
+			aria-controls="main-navigation"
 		>
 			{#if mobileMenuOpen}
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
 				</svg>
 			{:else}
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
 				</svg>
 			{/if}
 		</button>
 
-		<nav class="main-nav" class:mobile-open={mobileMenuOpen}>
+		<nav id="main-navigation" class="main-nav" class:mobile-open={mobileMenuOpen} aria-label="Main navigation">
 			{#each navItems as item}
 				<a
 					href={item.path}
 					class="nav-item"
 					class:active={isActive(item.path)}
 					onclick={closeMobileMenu}
+					aria-current={isActive(item.path) ? 'page' : undefined}
 				>
 					{#if item.icon === 'board'}
-						<svg viewBox="0 0 20 20" fill="currentColor">
+						<svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
 							<path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
 						</svg>
 					{:else if item.icon === 'recovery'}
-						<svg viewBox="0 0 20 20" fill="currentColor">
+						<svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
 							<path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
 						</svg>
 					{:else if item.icon === 'costs'}
-						<svg viewBox="0 0 20 20" fill="currentColor">
+						<svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
 							<path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"/>
 							<path fill-rule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clip-rule="evenodd"/>
 						</svg>
 					{:else if item.icon === 'settings'}
-						<svg viewBox="0 0 20 20" fill="currentColor">
+						<svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
 							<path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
 						</svg>
 					{/if}
@@ -128,13 +134,15 @@
 				class:active={$theme === 'dark'}
 				onclick={toggleTheme}
 				title={$theme === 'dark' ? 'Switch to Day Mode' : 'Switch to Night Shift'}
+				aria-label={$theme === 'dark' ? 'Switch to Day Mode' : 'Switch to Night Shift'}
+				aria-pressed={$theme === 'dark'}
 			>
 				{#if $theme === 'dark'}
-					<svg class="theme-icon" viewBox="0 0 20 20" fill="currentColor">
+					<svg class="theme-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
 						<path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
 					</svg>
 				{:else}
-					<svg class="theme-icon" viewBox="0 0 20 20" fill="currentColor">
+					<svg class="theme-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
 						<path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
 					</svg>
 				{/if}
@@ -146,24 +154,30 @@
 					class:demo={$demoMode}
 					onclick={toggleDemoMode}
 					title={$demoMode ? 'Switch to Live Mode' : 'Switch to Demo Mode'}
+					aria-label={$demoMode ? 'Switch to Live Mode' : 'Switch to Demo Mode'}
+					aria-pressed={$demoMode}
+					role="switch"
 				>
-					<span class="toggle-label">{$demoMode ? 'DEMO' : 'LIVE'}</span>
-					<span class="toggle-track">
+					<span class="toggle-label" aria-hidden="true">{$demoMode ? 'DEMO' : 'LIVE'}</span>
+					<span class="toggle-track" aria-hidden="true">
 						<span class="toggle-thumb"></span>
 					</span>
 				</button>
 			</div>
-			<div class="status-indicator" class:connected={$auth?.github?.connected}>
-				<span class="status-dot"></span>
+			<div class="status-indicator" class:connected={$auth?.github?.connected} role="status" aria-live="polite">
+				<span class="status-dot" aria-hidden="true"></span>
 				<span class="status-text">{$auth?.github?.connected ? 'Systems Online' : 'Setup Required'}</span>
 			</div>
 		</div>
 	</header>
 
 	<!-- Main Content -->
-	<main class="main-content">
+	<main id="main-content" class="main-content">
 		{@render children()}
 	</main>
+
+	<!-- Toast Notifications -->
+	<Toast />
 </div>
 
 <style>
@@ -171,6 +185,23 @@
 		min-height: 100vh;
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* Skip link for keyboard navigation */
+	.skip-link {
+		position: absolute;
+		top: -40px;
+		left: 0;
+		background: var(--scrubs);
+		color: white;
+		padding: var(--space-sm) var(--space-md);
+		z-index: 1000;
+		text-decoration: none;
+		font-weight: 500;
+	}
+
+	.skip-link:focus {
+		top: 0;
 	}
 
 	.top-bar {

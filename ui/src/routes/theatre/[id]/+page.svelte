@@ -4,6 +4,7 @@
 	import { projects, incidents } from '$lib/stores';
 	import * as api from '$lib/api';
 	import type { Project, Incident, Sample, ActivityLog } from '$lib/api';
+	import Breadcrumb from '$lib/components/Breadcrumb.svelte';
 
 	let projectId = $derived($page.params.id);
 	let incidentIdFromUrl = $derived($page.url.searchParams.get('incident'));
@@ -110,6 +111,11 @@
 		const diffDays = Math.floor(diffHours / 24);
 		return `${diffDays}d ago`;
 	}
+
+	let breadcrumbItems = $derived([
+		{ label: 'Surgery Board', href: '/' },
+		{ label: project?.repo?.split('/')[1] ?? 'Service', href: `/theatre/${projectId}` }
+	]);
 </script>
 
 <svelte:head>
@@ -117,14 +123,11 @@
 </svelte:head>
 
 <div class="theatre">
+	<!-- Breadcrumb Navigation -->
+	<Breadcrumb items={breadcrumbItems} />
+
 	<!-- Header -->
 	<header class="theatre-header">
-		<a href="/" class="back-link">
-			<svg viewBox="0 0 20 20" fill="currentColor">
-				<path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/>
-			</svg>
-			Surgery Board
-		</a>
 
 		{#if project}
 			<div class="theatre-title">
@@ -154,10 +157,10 @@
 
 	<div class="theatre-body">
 		<!-- Incident List -->
-		<aside class="incident-list">
+		<aside class="incident-list" aria-label="Incident cases">
 			<div class="list-header">
-				<h2>Cases</h2>
-				<span class="case-count">{projectIncidents.length}</span>
+				<h2 id="cases-heading">Cases</h2>
+				<span class="case-count" aria-label="{projectIncidents.length} cases">{projectIncidents.length}</span>
 			</div>
 
 			{#if projectIncidents.length === 0}
@@ -165,12 +168,15 @@
 					<p>No incidents recorded for this service.</p>
 				</div>
 			{:else}
-				<div class="cases">
+				<div class="cases" role="listbox" aria-labelledby="cases-heading">
 					{#each projectIncidents as incident}
 						<button
 							class="case-item"
 							class:selected={selectedIncident?.id === incident.id}
 							onclick={() => selectIncident(incident)}
+							role="option"
+							aria-selected={selectedIncident?.id === incident.id}
+							aria-label="{incident.message}, Status: {getStatusLabel(incident.status)}, {incident.sample_count} samples"
 						>
 							<div class="case-header">
 								<span class="badge {getStatusBadgeClass(incident.status)}">
@@ -232,9 +238,9 @@
 					</div>
 
 					<!-- Pipeline Status -->
-					<section class="pipeline-section">
-						<h3>Pipeline Status</h3>
-						<div class="pipeline">
+					<section class="pipeline-section" aria-label="Incident progress">
+						<h3 id="pipeline-heading">Pipeline Status</h3>
+						<div class="pipeline" role="list" aria-labelledby="pipeline-heading">
 							<div class="pipeline-step" class:complete={['triaging', 'unfixable', 'pending_fix', 'fixing', 'pr_open', 'pr_merged'].includes(selectedIncident.status)} class:active={selectedIncident.status === 'detected'}>
 								<span class="step-icon">1</span>
 								<span class="step-label">Detected</span>
@@ -299,13 +305,13 @@
 
 					<!-- Sample -->
 					{#if selectedIncident.samples.length > 0}
-						<section class="sample-section">
-							<h3>Sample Error</h3>
-							<div class="sample-card">
+						<section class="sample-section" aria-label="Error sample">
+							<h3 id="sample-heading">Sample Error</h3>
+							<div class="sample-card" role="region" aria-labelledby="sample-heading">
 								{#if selectedIncident.samples[0].stack_trace}
-									<pre class="stack-trace">{selectedIncident.samples[0].stack_trace}</pre>
+									<pre class="stack-trace" aria-label="Stack trace">{selectedIncident.samples[0].stack_trace}</pre>
 								{:else}
-									<pre class="raw-log">{selectedIncident.samples[0].raw_log}</pre>
+									<pre class="raw-log" aria-label="Raw log output">{selectedIncident.samples[0].raw_log}</pre>
 								{/if}
 							</div>
 						</section>
