@@ -283,11 +283,27 @@ pub async fn get(
     }))
 }
 
+/// Request body for retry with optional feedback
+#[derive(Debug, Deserialize)]
+pub struct RetryRequest {
+    /// Feedback about why the previous fix wasn't satisfactory
+    pub feedback: Option<String>,
+    /// Whether to fetch and include PR review comments
+    #[serde(default)]
+    pub include_pr_comments: bool,
+}
+
 /// POST /api/v1/incidents/:id/retry - Retry processing an incident
 pub async fn retry(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    Json(body): Json<Option<RetryRequest>>,
 ) -> Result<Json<IncidentResponse>, AppError> {
+    let request = body.unwrap_or(RetryRequest {
+        feedback: None,
+        include_pr_comments: true, // Default to including PR comments
+    });
+
     // Check incident exists and is in a retryable state
     let incident = sqlx::query_as!(
         Incident,
@@ -310,9 +326,10 @@ pub async fn retry(
     .ok_or_not_found("Incident not found")?;
 
     let state_str = incident.state.as_deref().unwrap_or("unknown");
+    // Allow retry from pr_open state too (for iterating on PRs)
     if !matches!(
         state_str,
-        "fix_failed" | "unfixable" | "cooldown" | "pr_closed"
+        "fix_failed" | "unfixable" | "cooldown" | "pr_closed" | "pr_open"
     ) {
         return Err(AppError::BadRequest(format!(
             "Cannot retry incident in state '{}'",
@@ -320,7 +337,16 @@ pub async fn retry(
         )));
     }
 
-    // Reset to detected state
+    // Build activity log details
+    let details = serde_json::json!({
+        "feedback": request.feedback,
+        "include_pr_comments": request.include_pr_comments,
+        "previous_state": state_str,
+        "has_existing_pr": incident.pr_url.is_some(),
+    });
+
+    // Reset to detected state but keep PR info for branch reuse
+    // Store feedback for the worker to use
     let updated = sqlx::query_as!(
         Incident,
         r#"
@@ -339,20 +365,21 @@ pub async fn retry(
                   recurrence_count, recurrence_detected_at,
                   created_at, updated_at
         "#,
-        id
+        id,
     )
     .fetch_one(&state.db)
     .await?;
 
-    // Log the retry
+    // Log the retry with details
     sqlx::query!(
         r#"
         INSERT INTO activity_log (id, incident_id, project_id, action, details)
-        VALUES ($1, $2, $3, 'retry_requested', '{}'::jsonb)
+        VALUES ($1, $2, $3, 'retry_requested', $4)
         "#,
         Uuid::new_v4(),
         id,
         incident.project_id,
+        details,
     )
     .execute(&state.db)
     .await?;

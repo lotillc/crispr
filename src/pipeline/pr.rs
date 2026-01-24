@@ -27,17 +27,43 @@ pub struct PrResult {
     pub tests_added: usize,
 }
 
+/// Generate a ticket-style branch name for an incident
+/// Format: crispr-{short_id}-{hyphen-separated-description}
+/// Example: crispr-a1b2c3-fix-null-pointer-in-user-controller
+fn generate_branch_name(incident: &Incident) -> String {
+    // Get short ID (first 6 chars of UUID)
+    let short_id = incident.id.to_string().chars().take(6).collect::<String>();
+
+    // Generate description from title, max 5 words
+    let description = incident.title.as_deref().unwrap_or("fix-error");
+    let words: Vec<&str> = description
+        .split(|c: char| c.is_whitespace() || c == ':' || c == '-')
+        .filter(|w| !w.is_empty() && w.len() > 1)
+        .take(5)
+        .collect();
+
+    let slug = if words.is_empty() {
+        "fix-error".to_string()
+    } else {
+        words.join("-").to_lowercase()
+    };
+
+    let sanitized = sanitize_for_branch(&slug);
+    format!("crispr-{}-{}", short_id, sanitized)
+}
+
 /// Create a PR with the generated fix
 ///
 /// If `tests_to_include` is provided, only those tests will be added to the PR.
 /// If `None`, all tests from the fix will be included.
+/// If `existing_branch` is provided, commits will be added to that branch instead of creating a new one.
 pub async fn create(
     github: &Arc<GitHubClient>,
     llm: &TrackedLlm,
     project: &Project,
     incident: &Incident,
     fix: &GeneratedFix,
-    branch_prefix: &str,
+    _branch_prefix: &str,
     tests_to_include: Option<&[GeneratedTest]>,
 ) -> Result<PrResult> {
     let owner = &project.github_owner;
@@ -50,20 +76,25 @@ pub async fn create(
         None => fix.generated_tests.iter().collect(),
     };
 
-    // Generate branch name
-    let branch_name = format!(
-        "{}fix-{}-{}",
-        branch_prefix,
-        incident.id.to_string().split('-').next().unwrap_or("unknown"),
-        sanitize_for_branch(&incident.title.as_deref().unwrap_or("error")[..30.min(incident.title.as_deref().unwrap_or("error").len())])
-    );
+    // Check if we should reuse an existing branch (retry scenario)
+    let (branch_name, is_new_branch) = if let Some(pr_number) = incident.pr_number {
+        // Try to get the existing PR's branch
+        match github.get_pull_request(owner, repo, pr_number).await {
+            Ok(pr) => (pr.head.ref_name, false),
+            Err(_) => (generate_branch_name(incident), true),
+        }
+    } else {
+        (generate_branch_name(incident), true)
+    };
 
     // Get the base branch SHA
     let base_ref = github.get_branch(owner, repo, default_branch).await?;
     let base_sha = base_ref.object.sha;
 
-    // Create the new branch
-    github.create_branch(owner, repo, &branch_name, &base_sha).await?;
+    // Create the new branch only if we don't have an existing one
+    if is_new_branch {
+        github.create_branch(owner, repo, &branch_name, &base_sha).await?;
+    }
 
     // Commit each file change
     for change in &fix.changes {

@@ -234,22 +234,41 @@ function createThemeStore() {
 
 export const theme = createThemeStore();
 
+// Check if we're in a static deployment (e.g., GitHub Pages)
+// Static deployments always run in demo mode since there's no backend
+function isStaticDeployment(): boolean {
+	if (typeof window === 'undefined') return false;
+	// If we're on a github.io domain or have a base path, it's a static deployment
+	const hostname = window.location.hostname;
+	return hostname.endsWith('.github.io') || hostname.endsWith('.netlify.app') || hostname.endsWith('.vercel.app');
+}
+
 // Helper to check demo mode directly from localStorage (avoids store timing issues)
 function isDemoMode(): boolean {
 	if (typeof window === 'undefined') return false;
+	// Force demo mode for static deployments
+	if (isStaticDeployment()) return true;
 	return localStorage.getItem('crispr_demo_mode') === 'true';
 }
 
 // Demo mode store - persisted to localStorage
 function createDemoModeStore() {
-	// Initialize from localStorage if available
-	const initial = typeof window !== 'undefined' && localStorage.getItem('crispr_demo_mode') === 'true';
+	// Initialize from localStorage if available, or force true for static deployments
+	const initial = typeof window !== 'undefined' &&
+		(isStaticDeployment() || localStorage.getItem('crispr_demo_mode') === 'true');
 	const { subscribe, set, update } = writable<boolean>(initial);
 
 	return {
 		subscribe,
 		init() {
 			if (typeof window === 'undefined') return;
+
+			// Force demo mode for static deployments
+			if (isStaticDeployment()) {
+				set(true);
+				sseManager.close();
+				return;
+			}
 
 			// Sync store with localStorage value
 			const storedValue = localStorage.getItem('crispr_demo_mode') === 'true';
@@ -398,7 +417,7 @@ function createIncidentsStore() {
 				)
 			);
 		},
-		async retry(id: string) {
+		async retry(id: string, options?: api.RetryOptions) {
 			if (isDemoMode()) {
 				update(incidents =>
 					incidents.map(i =>
@@ -407,7 +426,7 @@ function createIncidentsStore() {
 				);
 				return;
 			}
-			await api.retryIncident(id);
+			await api.retryIncident(id, options);
 			update(incidents =>
 				incidents.map(i =>
 					i.id === id ? { ...i, status: 'detected' as const } : i

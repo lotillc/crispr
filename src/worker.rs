@@ -651,6 +651,67 @@ impl Worker {
         );
 
         // === FIX GENERATION ===
+
+        // Check if this is a retry by looking for feedback in activity log
+        let retry_feedback: Option<String> = sqlx::query_scalar!(
+            r#"
+            SELECT details->>'feedback' as feedback
+            FROM activity_log
+            WHERE incident_id = $1 AND action = 'retry_requested'
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+            incident.id
+        )
+        .fetch_optional(&self.state.db)
+        .await?
+        .flatten();
+
+        // Build retry context if this is a retry with feedback or has a PR
+        let is_retry = incident.fix_attempts.unwrap_or(0) > 0;
+        let retry_context = if retry_feedback.is_some() || (is_retry && incident.pr_number.is_some()) {
+            let mut pr_comments = Vec::new();
+
+            // Fetch PR comments if there's an existing PR
+            if let Some(pr_number) = incident.pr_number {
+                match self.state.github.get_pull_request_comments(
+                    &project.github_owner,
+                    &project.github_repo,
+                    pr_number,
+                ).await {
+                    Ok(comments) => {
+                        pr_comments = comments.into_iter()
+                            .filter(|c| {
+                                // Filter out bot comments and empty comments
+                                let is_bot = c.user.as_ref()
+                                    .and_then(|u| u.user_type.as_deref())
+                                    .map(|t| t == "Bot")
+                                    .unwrap_or(false);
+                                !is_bot && !c.body.trim().is_empty()
+                            })
+                            .map(|c| fix::PrComment {
+                                author: c.user.map(|u| u.login).unwrap_or_default(),
+                                body: c.body,
+                                file_path: c.path,
+                                line: c.line,
+                            })
+                            .collect();
+                    }
+                    Err(e) => {
+                        warn!("Failed to fetch PR comments: {}", e);
+                    }
+                }
+            }
+
+            Some(fix::RetryContext {
+                feedback: retry_feedback.clone(),
+                pr_comments,
+                attempt_number: incident.fix_attempts.unwrap_or(0) + 1,
+            })
+        } else {
+            None
+        };
+
         log_activity(
             &self.state.db,
             incident.id,
@@ -658,12 +719,14 @@ impl Worker {
             "generating_fix",
             &serde_json::json!({
                 "files": context.files.iter().map(|f| &f.path).collect::<Vec<_>>(),
+                "is_retry": is_retry,
+                "has_feedback": retry_feedback.is_some(),
             }),
         )
         .await?;
 
         let fix_timer = StageTimer::start("fix");
-        let generated_fix = fix::generate(&writer, &context, incident.id, project.id).await?;
+        let generated_fix = fix::generate(&writer, &context, incident.id, project.id, retry_context.as_ref()).await?;
         fix_timer.stop();
 
         // Store generated tests in the database

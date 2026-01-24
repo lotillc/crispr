@@ -292,12 +292,33 @@ pub fn derive_test_file_path(source_path: &str, language: &str) -> String {
     }
 }
 
+/// Feedback context for retry attempts
+#[derive(Debug, Clone, Default)]
+pub struct RetryContext {
+    /// User-provided feedback about why the previous fix wasn't satisfactory
+    pub feedback: Option<String>,
+    /// Comments from PR reviews
+    pub pr_comments: Vec<PrComment>,
+    /// Number of previous attempts
+    pub attempt_number: i32,
+}
+
+/// A comment from a PR review
+#[derive(Debug, Clone)]
+pub struct PrComment {
+    pub author: String,
+    pub body: String,
+    pub file_path: Option<String>,
+    pub line: Option<i32>,
+}
+
 /// Generate a fix for the error
 pub async fn generate(
     llm: &TrackedLlm,
     context: &FixContext,
     incident_id: Uuid,
     project_id: Uuid,
+    retry_context: Option<&RetryContext>,
 ) -> Result<GeneratedFix> {
     // Build prompt with context
     let files_context: String = context
@@ -319,10 +340,57 @@ pub async fn generate(
     let language = context.project.language.as_deref().unwrap_or("unknown");
     let test_framework_hint = get_test_framework_hint(language);
 
+    // Build feedback section if this is a retry
+    let feedback_section = if let Some(retry) = retry_context {
+        let mut sections = Vec::new();
+
+        if retry.attempt_number > 1 {
+            sections.push(format!("## Retry Attempt #{}\nThis is a retry - previous fixes were not satisfactory.", retry.attempt_number));
+        }
+
+        if let Some(feedback) = &retry.feedback {
+            sections.push(format!("## User Feedback on Previous Fix\n{}", feedback));
+        }
+
+        if !retry.pr_comments.is_empty() {
+            let comments: String = retry.pr_comments.iter()
+                .map(|c| {
+                    let location = match (&c.file_path, c.line) {
+                        (Some(path), Some(line)) => format!(" ({}:{})", path, line),
+                        (Some(path), None) => format!(" ({})", path),
+                        _ => String::new(),
+                    };
+                    format!("- @{}{}: {}", c.author, location, c.body)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            sections.push(format!(
+                r#"## PR Review Comments
+The following comments were left on the previous PR. Consider them as context but use judgment:
+- Not every comment is a command - some may just be acknowledgments or questions
+- Focus on actionable feedback that improves the fix
+- Ignore comments that are just confirmations or unrelated discussion
+
+{}
+"#,
+                comments
+            ));
+        }
+
+        if sections.is_empty() {
+            String::new()
+        } else {
+            sections.join("\n\n") + "\n\n"
+        }
+    } else {
+        String::new()
+    };
+
     let prompt = format!(
         r#"Fix this production error:
 
-## Error Information
+{}## Error Information
 - Category: {}
 - Description: {}
 - Suggested approach: {}
@@ -386,6 +454,7 @@ CRITICAL REQUIREMENTS:
 6. ALWAYS include generated_tests array with at least one test
 
 JSON response:"#,
+        feedback_section,
         context.triage.category,
         context.triage.description,
         context.triage.fix_approach.as_deref().unwrap_or("Not specified"),

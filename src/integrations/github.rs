@@ -179,6 +179,42 @@ impl GitHubClient {
         Ok(serde_json::from_value(response)?)
     }
 
+    /// Get an existing pull request by number
+    pub async fn get_pull_request(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: i32,
+    ) -> Result<PullRequest> {
+        let response = self.get(&format!("/repos/{}/{}/pulls/{}", owner, repo, number)).await?;
+        Ok(serde_json::from_value(response)?)
+    }
+
+    /// Get review comments on a pull request
+    pub async fn get_pull_request_comments(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: i32,
+    ) -> Result<Vec<PullRequestComment>> {
+        // Get both review comments and issue comments
+        let review_comments: Vec<PullRequestComment> = self.get(
+            &format!("/repos/{}/{}/pulls/{}/comments", owner, repo, number)
+        ).await
+            .map(|r| serde_json::from_value(r).unwrap_or_default())
+            .unwrap_or_default();
+
+        let issue_comments: Vec<PullRequestComment> = self.get(
+            &format!("/repos/{}/{}/issues/{}/comments", owner, repo, number)
+        ).await
+            .map(|r| serde_json::from_value(r).unwrap_or_default())
+            .unwrap_or_default();
+
+        let mut all_comments = review_comments;
+        all_comments.extend(issue_comments);
+        Ok(all_comments)
+    }
+
     /// Create a GitHub issue
     pub async fn create_issue(
         &self,
@@ -545,6 +581,27 @@ pub struct PullRequestRef {
     #[serde(rename = "ref")]
     pub ref_name: String,
     pub sha: String,
+}
+
+/// Comment on a pull request (review comment or issue comment)
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PullRequestComment {
+    pub id: i64,
+    pub body: String,
+    pub user: Option<CommentAuthor>,
+    pub created_at: String,
+    /// Path to the file (only for review comments)
+    pub path: Option<String>,
+    /// Line number (only for review comments)
+    pub line: Option<i32>,
+}
+
+/// Author of a comment (simplified user info)
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct CommentAuthor {
+    pub login: String,
+    #[serde(rename = "type")]
+    pub user_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

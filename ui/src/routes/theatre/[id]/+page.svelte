@@ -24,6 +24,8 @@
 	let loadingTests = $state(false);
 	let togglingTest = $state(false);
 	let showProjectSettings = $state(false);
+	let showRetryModal = $state(false);
+	let retryFeedback = $state('');
 
 	onMount(async () => {
 		if (projectId) {
@@ -99,11 +101,33 @@
 		}
 	}
 
-	async function retryIncident() {
+	function openRetryModal() {
+		retryFeedback = '';
+		showRetryModal = true;
+	}
+
+	async function submitRetry() {
 		if (!selectedIncident) return;
 		actionLoading = true;
+		showRetryModal = false;
 		try {
-			await incidents.retry(selectedIncident.id);
+			await incidents.retry(selectedIncident.id, {
+				feedback: retryFeedback.trim() || undefined,
+				includePrComments: true,
+			});
+			selectedIncident = await incidents.get(selectedIncident.id);
+		} finally {
+			actionLoading = false;
+			retryFeedback = '';
+		}
+	}
+
+	async function retryWithoutFeedback() {
+		if (!selectedIncident) return;
+		actionLoading = true;
+		showRetryModal = false;
+		try {
+			await incidents.retry(selectedIncident.id, { includePrComments: true });
 			selectedIncident = await incidents.get(selectedIncident.id);
 		} finally {
 			actionLoading = false;
@@ -325,7 +349,7 @@
 								</a>
 							{/if}
 							{#if !['pr_merged', 'ignored'].includes(selectedIncident.status)}
-								<button class="btn btn-secondary" onclick={retryIncident} disabled={actionLoading}>
+								<button class="btn btn-secondary" onclick={openRetryModal} disabled={actionLoading}>
 									Retry Fix
 								</button>
 								<button class="btn btn-ghost" onclick={ignoreIncident} disabled={actionLoading}>
@@ -554,6 +578,55 @@
 			</div>
 			<div class="modal-body">
 				<IssueTrackerSettings projectId={project.id} />
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Retry Fix Modal -->
+{#if showRetryModal}
+	<div class="modal-overlay" onclick={() => showRetryModal = false}>
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<div class="modal-header">
+				<h3>Retry Fix</h3>
+				<button class="modal-close" onclick={() => showRetryModal = false}>
+					<svg viewBox="0 0 20 20" fill="currentColor">
+						<path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+					</svg>
+				</button>
+			</div>
+			<div class="modal-body">
+				<p class="retry-description">
+					Provide feedback to help improve the next fix attempt. This feedback will be used by the AI to generate a better solution.
+				</p>
+				{#if selectedIncident?.pr_url}
+					<div class="retry-info">
+						<svg viewBox="0 0 20 20" fill="currentColor">
+							<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+						</svg>
+						<span>PR comments will also be included as context for the AI.</span>
+					</div>
+				{/if}
+				<div class="form-group">
+					<label for="retry-feedback">What's wrong with the current fix?</label>
+					<textarea
+						id="retry-feedback"
+						bind:value={retryFeedback}
+						placeholder="e.g., The fix doesn't handle edge case X, or the approach should use Y instead of Z..."
+						rows="4"
+					></textarea>
+				</div>
+			</div>
+			<div class="modal-footer">
+				<button class="btn btn-ghost" onclick={() => showRetryModal = false}>
+					Cancel
+				</button>
+				<button class="btn btn-secondary" onclick={retryWithoutFeedback}>
+					Retry Without Feedback
+				</button>
+				<button class="btn btn-primary" onclick={submitRetry} disabled={!retryFeedback.trim()}>
+					Retry With Feedback
+				</button>
 			</div>
 		</div>
 	</div>
@@ -1280,6 +1353,76 @@
 		padding: var(--space-lg);
 		overflow-y: auto;
 		flex: 1;
+	}
+
+	.modal-footer {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--space-sm);
+		padding: var(--space-lg);
+		border-top: 1px solid var(--silver);
+	}
+
+	.retry-description {
+		color: var(--graphite);
+		font-size: 0.875rem;
+		margin-bottom: var(--space-md);
+		line-height: 1.5;
+	}
+
+	.retry-info {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-sm);
+		padding: var(--space-md);
+		background: var(--vitals-soft);
+		border-radius: var(--radius-md);
+		margin-bottom: var(--space-md);
+	}
+
+	.retry-info svg {
+		width: 20px;
+		height: 20px;
+		color: var(--vitals);
+		flex-shrink: 0;
+	}
+
+	.retry-info span {
+		font-size: 0.8125rem;
+		color: var(--charcoal);
+	}
+
+	.form-group {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.form-group label {
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--charcoal);
+	}
+
+	.form-group textarea {
+		width: 100%;
+		padding: var(--space-md);
+		border: 1px solid var(--silver);
+		border-radius: var(--radius-md);
+		font-size: 0.875rem;
+		font-family: inherit;
+		resize: vertical;
+		min-height: 100px;
+	}
+
+	.form-group textarea:focus {
+		outline: none;
+		border-color: var(--scrubs);
+		box-shadow: 0 0 0 3px var(--scrubs-soft);
+	}
+
+	.form-group textarea::placeholder {
+		color: var(--slate);
 	}
 
 	@media (max-width: 1024px) {

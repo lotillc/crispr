@@ -324,8 +324,20 @@ export async function getIncident(id: string): Promise<Incident & {
 	return request(`/api/v1/incidents/${id}`);
 }
 
-export async function retryIncident(id: string): Promise<void> {
-	await request(`/api/v1/incidents/${id}/retry`, { method: 'POST' });
+export interface RetryOptions {
+	feedback?: string;
+	includePrComments?: boolean;
+}
+
+export async function retryIncident(id: string, options?: RetryOptions): Promise<void> {
+	const body = options ? {
+		feedback: options.feedback,
+		include_pr_comments: options.includePrComments ?? true,
+	} : null;
+	await request(`/api/v1/incidents/${id}/retry`, {
+		method: 'POST',
+		body: body ? JSON.stringify(body) : undefined,
+	});
 }
 
 export async function ignoreIncident(id: string): Promise<void> {
