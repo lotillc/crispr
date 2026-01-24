@@ -63,7 +63,7 @@ class SSEManager {
 
 	connect() {
 		if (typeof window === 'undefined') return;
-		if (get(demoMode)) return;
+		if (isDemoMode()) return;
 		if (this.isConnecting || this.eventSource?.readyState === EventSource.OPEN) return;
 
 		this.isConnecting = true;
@@ -167,7 +167,7 @@ class SSEManager {
 
 		console.log('SSE: Starting fallback polling');
 		this.fallbackInterval = setInterval(() => {
-			if (!get(demoMode)) {
+			if (!isDemoMode()) {
 				incidents.load();
 				stats.load();
 			}
@@ -234,21 +234,32 @@ function createThemeStore() {
 
 export const theme = createThemeStore();
 
+// Helper to check demo mode directly from localStorage (avoids store timing issues)
+function isDemoMode(): boolean {
+	if (typeof window === 'undefined') return false;
+	return localStorage.getItem('crispr_demo_mode') === 'true';
+}
+
 // Demo mode store - persisted to localStorage
 function createDemoModeStore() {
-	// Start with false, will hydrate from localStorage on client
-	const { subscribe, set, update } = writable<boolean>(false);
-	let initialized = false;
+	// Initialize from localStorage if available
+	const initial = typeof window !== 'undefined' && localStorage.getItem('crispr_demo_mode') === 'true';
+	const { subscribe, set, update } = writable<boolean>(initial);
 
 	return {
 		subscribe,
 		init() {
-			// Only run on client, only once
-			if (initialized || typeof window === 'undefined') return;
-			initialized = true;
-			const stored = localStorage.getItem('crispr_demo_mode');
-			if (stored === 'true') {
-				set(true);
+			if (typeof window === 'undefined') return;
+
+			// Sync store with localStorage value
+			const storedValue = localStorage.getItem('crispr_demo_mode') === 'true';
+			set(storedValue);
+
+			// Manage SSE connection based on demo mode
+			if (storedValue) {
+				sseManager.close();
+			} else {
+				sseManager.connect();
 			}
 		},
 		toggle() {
@@ -292,7 +303,7 @@ function createProjectsStore() {
 	return {
 		subscribe,
 		async load() {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				set(mockProjects);
 				return;
 			}
@@ -305,7 +316,7 @@ function createProjectsStore() {
 			}
 		},
 		async create(repo: string) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				const newProject: Project = {
 					id: `proj-${Date.now()}`,
 					repo,
@@ -323,7 +334,7 @@ function createProjectsStore() {
 			return project;
 		},
 		async update(id: string, updates: Partial<Project>) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				update(projects => projects.map(p => p.id === id ? { ...p, ...updates } : p));
 				return { ...mockProjects.find(p => p.id === id), ...updates } as Project;
 			}
@@ -332,7 +343,7 @@ function createProjectsStore() {
 			return updated;
 		},
 		async delete(id: string) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				update(projects => projects.filter(p => p.id !== id));
 				return;
 			}
@@ -360,7 +371,7 @@ function createIncidentsStore() {
 	return {
 		subscribe,
 		async load(params?: { project_id?: string; status?: string }) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				let incidents = getMockIncidentsWithProjects();
 				if (params?.project_id) {
 					incidents = incidents.filter(i => i.project_id === params.project_id);
@@ -388,7 +399,7 @@ function createIncidentsStore() {
 			);
 		},
 		async retry(id: string) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				update(incidents =>
 					incidents.map(i =>
 						i.id === id ? { ...i, status: 'detected' as const, fix_attempts: (i.fix_attempts || 0) + 1 } : i
@@ -404,7 +415,7 @@ function createIncidentsStore() {
 			);
 		},
 		async ignore(id: string) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				update(incidents =>
 					incidents.map(i =>
 						i.id === id ? { ...i, status: 'ignored' as const } : i
@@ -420,7 +431,7 @@ function createIncidentsStore() {
 			);
 		},
 		async get(id: string) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				const details = getMockIncidentDetails(id);
 				if (!details) {
 					throw new Error('Incident not found');
@@ -432,7 +443,7 @@ function createIncidentsStore() {
 		startRefresh(params?: { project_id?: string; status?: string }) {
 			this.load(params);
 			// Only use polling if SSE is not available (demo mode or error)
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				refreshInterval = setInterval(() => this.load(params), REFRESH_INTERVAL);
 			}
 		},
@@ -452,7 +463,7 @@ function createStatsStore() {
 	return {
 		subscribe,
 		async load() {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				set(mockIncidentStats);
 				return;
 			}
@@ -492,7 +503,7 @@ function createAuthStore() {
 	return {
 		subscribe,
 		async load() {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				set(mockAuthStatus);
 				return;
 			}
@@ -519,7 +530,7 @@ function createLlmConfigStore() {
 	return {
 		subscribe,
 		async load() {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				set({
 					reader_provider: 'anthropic',
 					reader_model: 'claude-3-haiku-20240307',
@@ -536,7 +547,7 @@ function createLlmConfigStore() {
 			}
 		},
 		async update(config: Parameters<typeof api.updateLlmConfig>[0]) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				// In demo mode, just update the local store
 				return;
 			}
@@ -553,7 +564,7 @@ function createUsageStore() {
 	return {
 		subscribe,
 		async load(params?: { start_date?: string; end_date?: string }) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				set(mockUsageSummary);
 				return;
 			}
@@ -565,7 +576,7 @@ function createUsageStore() {
 			}
 		},
 		async loadDetails(params?: { start_date?: string; end_date?: string }) {
-			if (get(demoMode)) {
+			if (isDemoMode()) {
 				return mockUsageDetails;
 			}
 			try {
@@ -631,9 +642,16 @@ export const triageQueue: Readable<{
 );
 
 // Subscribe to demo mode changes to reload data
-demoMode.subscribe(() => {
-	// Only reload if we're in the browser
+let demoModeInitialSubscription = true;
+demoMode.subscribe((value) => {
+	// Skip the initial subscription to avoid double-loading
+	if (demoModeInitialSubscription) {
+		demoModeInitialSubscription = false;
+		return;
+	}
+	// Reload data when demo mode is toggled
 	if (typeof window !== 'undefined') {
+		console.log('Demo mode toggled to:', value, '- reloading data');
 		projects.load();
 		incidents.load();
 		stats.load();
@@ -646,7 +664,7 @@ demoMode.subscribe(() => {
 if (typeof window !== 'undefined') {
 	// Wait for demo mode to be initialized, then connect SSE
 	setTimeout(() => {
-		if (!get(demoMode)) {
+		if (!isDemoMode()) {
 			sseManager.connect();
 		}
 	}, 100);

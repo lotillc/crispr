@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::api::metrics::{self, StageTimer};
 use crate::api::AppState;
+use crate::integrations::issue_trackers::{self, IncidentStateChange};
 use crate::pipeline::{
     context, crispr_md::CrisprMdManager, fix, pr, repo::RepoManager, surgical, triage,
     verification, DiffCheckResult, LockResult,
@@ -193,7 +194,9 @@ impl Worker {
                    i.sample_location, i.fix_attempts, i.pr_url, i.pr_number, i.pr_state,
                    i.tests_generated, i.test_count, i.matched_pattern_id, i.pattern_auto_triaged,
                    i.queued_at, i.queue_position, i.verification_round, i.verification_status,
-                   i.verified_at, i.pr_merged_at,
+                   i.verified_at, i.pr_merged_at, i.verification_duration_hours,
+                   i.verification_started_at, i.verification_ends_at,
+                   i.recurrence_count, i.recurrence_detected_at,
                    i.created_at, i.updated_at
             FROM incidents i
             WHERE i.state = 'detected'
@@ -529,6 +532,8 @@ impl Worker {
                 }),
             )
             .await?;
+            // Sync to issue trackers
+            sync_to_issue_trackers(&self.state, incident, project, Some("triaging"), "unfixable").await;
             return Ok(());
         }
 
@@ -806,6 +811,12 @@ impl Worker {
             "PR opened successfully"
         );
 
+        // Sync to issue trackers with updated PR info
+        let mut incident_with_pr = incident.clone();
+        incident_with_pr.pr_url = Some(pr_result.url.clone());
+        incident_with_pr.pr_number = Some(pr_result.number);
+        sync_to_issue_trackers(&self.state, &incident_with_pr, project, Some("pr_opening"), "pr_open").await;
+
         // Broadcast PR created event via SSE
         self.state.events.incident_updated(
             incident.id,
@@ -931,15 +942,23 @@ async fn verification_loop(state: &AppState) {
             match verification::advance_verification(&state.db, incident_id).await {
                 Ok(complete) => {
                     if complete {
-                        // Broadcast the state change
-                        let incident = sqlx::query!(
-                            "SELECT state, verification_status FROM incidents WHERE id = $1",
+                        // Broadcast the state change and sync to issue trackers
+                        let incident_data = sqlx::query!(
+                            r#"
+                            SELECT i.id, i.project_id, i.fingerprint, i.title, i.state,
+                                   i.verification_status, i.pr_url, i.pr_number, i.fix_attempts,
+                                   i.verification_duration_hours,
+                                   p.github_owner, p.github_repo
+                            FROM incidents i
+                            JOIN projects p ON p.id = i.project_id
+                            WHERE i.id = $1
+                            "#,
                             incident_id
                         )
                         .fetch_optional(&state.db)
                         .await;
 
-                        if let Ok(Some(i)) = incident {
+                        if let Ok(Some(i)) = incident_data {
                             let new_state = i.state.as_deref().unwrap_or("verified");
                             state.events.incident_updated(incident_id, new_state, None, None);
                             crate::api::events::broadcast_stats(state).await;
@@ -951,6 +970,27 @@ async fn verification_loop(state: &AppState) {
                                 status = status,
                                 "Verification completed"
                             );
+
+                            // Sync to issue trackers
+                            let event = IncidentStateChange {
+                                incident_id: i.id,
+                                project_id: i.project_id,
+                                fingerprint: i.fingerprint,
+                                title: i.title,
+                                old_state: Some("verifying".to_string()),
+                                new_state: new_state.to_string(),
+                                message: None,
+                                pr_url: i.pr_url,
+                                pr_number: i.pr_number,
+                                fix_attempts: i.fix_attempts.unwrap_or(0),
+                                verification_duration_hours: i.verification_duration_hours,
+                                occurred_at: chrono::Utc::now(),
+                                github_owner: i.github_owner,
+                                github_repo: i.github_repo,
+                            };
+                            if let Err(e) = issue_trackers::sync_incident_state(&state.db, &state.github, &event).await {
+                                warn!(error = %e, incident_id = %incident_id, "Failed to sync verification to issue trackers");
+                            }
                         }
                     }
                 }
@@ -1049,4 +1089,39 @@ async fn log_activity(
     .await?;
 
     Ok(())
+}
+
+/// Sync incident state change to external issue trackers
+async fn sync_to_issue_trackers(
+    state: &AppState,
+    incident: &Incident,
+    project: &Project,
+    old_state: Option<&str>,
+    new_state: &str,
+) {
+    let event = IncidentStateChange {
+        incident_id: incident.id,
+        project_id: project.id,
+        fingerprint: incident.fingerprint.clone(),
+        title: incident.title.clone(),
+        old_state: old_state.map(String::from),
+        new_state: new_state.to_string(),
+        message: incident.title.clone(),
+        pr_url: incident.pr_url.clone(),
+        pr_number: incident.pr_number,
+        fix_attempts: incident.fix_attempts.unwrap_or(0),
+        verification_duration_hours: incident.verification_duration_hours,
+        occurred_at: chrono::Utc::now(),
+        github_owner: project.github_owner.clone(),
+        github_repo: project.github_repo.clone(),
+    };
+
+    if let Err(e) = issue_trackers::sync_incident_state(&state.db, &state.github, &event).await {
+        warn!(
+            error = %e,
+            incident_id = %incident.id,
+            new_state = new_state,
+            "Failed to sync to issue trackers"
+        );
+    }
 }

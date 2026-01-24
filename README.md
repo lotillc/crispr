@@ -4,14 +4,91 @@
 
 A self-hosted production error monitoring system that automatically generates fixes and opens pull requests using LLMs.
 
+---
+
+## Incident Lifecycle
+
+Every error flows through a defined lifecycle. Understanding these stages helps you know what CRISPR is doing and when human intervention is needed.
+
 ```
-Error Detected → LLM Triage → Context Gathering → Fix Generation → PR Created
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│ DETECTED │───▶│ TRIAGING │───▶│  FIXING  │───▶│ PR_OPEN  │───▶│ VERIFYING│───▶│ VERIFIED │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
+                     │               │               │               │
+                     ▼               ▼               ▼               ▼
+               ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+               │UNFIXABLE │    │FIX_FAILED│    │PR_CLOSED │    │ RECURRED │
+               └──────────┘    └──────────┘    └──────────┘    └──────────┘
 ```
+
+### Stage Descriptions
+
+| Stage | What's Happening | Moves Forward When | Falls Back When |
+|-------|------------------|-------------------|-----------------|
+| **detected** | Error received and deduplicated | Worker picks it up | — |
+| **triaging** | LLM analyzing if error is fixable | LLM says fixable with confidence | LLM says unfixable → `unfixable` |
+| **pending_fix** | Waiting in queue for surgical lock | Repo lock acquired | — |
+| **fixing** | LLM generating code fix + tests | Fix generated successfully | LLM fails or times out → `fix_failed` |
+| **pr_opening** | Creating branch and pull request | PR created on GitHub | GitHub API fails → `fix_failed` |
+| **pr_open** | PR awaiting human review | PR merged on GitHub | PR closed without merge → `pr_closed` |
+| **pr_merged** | PR merged, preparing verification | Verification monitoring starts | — |
+| **verifying** | Monitoring for error recurrence | Monitoring period completes with no recurrence | Error reoccurs → `detected` (retry) |
+| **verified** | Fix confirmed working ✓ | — (terminal state) | — |
+
+### Terminal States (Require Human Action)
+
+| State | Meaning | What To Do |
+|-------|---------|------------|
+| **unfixable** | LLM determined this can't be auto-fixed | Review manually, click "Retry" if you disagree |
+| **fix_failed** | Fix generation failed (LLM error, timeout) | Click "Retry" to try again |
+| **pr_closed** | PR was closed without merging | Review why, click "Retry" for new attempt |
+| **max_attempts** | Hit retry limit (default: 3) | Needs manual fix |
+| **cooldown** | Too many recent attempts, waiting | Will auto-retry after cooldown period |
+| **ignored** | Manually marked as ignored | Click "Retry" to re-enable |
+
+### Verification: How Fixes Are Confirmed
+
+After a PR is merged, CRISPR doesn't immediately mark the fix as complete. Instead, it enters a **verification period** to ensure the fix actually works in production.
+
+**How it works:**
+
+1. **Duration is per-incident**: The LLM recommends a monitoring period (24 hours to 30 days) based on:
+   - Error pattern (transient vs persistent issues)
+   - Whether it involves time-based behavior (billing cycles, cron jobs, monthly reports)
+   - Impact severity
+
+2. **Monitoring**: CRISPR watches for new occurrences of the same error fingerprint
+
+3. **Outcomes**:
+   - **No recurrence** → `verified` (fix confirmed working)
+   - **Error reoccurs** → `detected` (back to the start for another fix attempt)
+
+**Example durations:**
+- Missing import error: 24 hours (deterministic, either works or doesn't)
+- Session handling bug: 48 hours (needs time for sessions to cycle)
+- Rate limiting issue: 7 days (needs traffic patterns to exercise the code)
+- Billing calculation bug: 30 days (needs to cover a full billing cycle)
+
+### Surgical Queue: One Fix Per Repo At A Time
+
+To prevent merge conflicts and ensure clean commits, CRISPR uses a **surgical lock** system:
+
+- Only one incident per repository can be actively fixed at a time
+- Other incidents for the same repo wait in a queue (`pending_fix` state)
+- Before starting a fix, CRISPR does a fresh `git pull` to get the latest code
+- After the fix is complete (PR opened), the lock is released for the next incident
+
+This ensures each fix is based on the current state of the codebase and avoids conflicting changes.
 
 ---
 
 ## Table of Contents
 
+- [Incident Lifecycle](#incident-lifecycle)
+  - [Stage Descriptions](#stage-descriptions)
+  - [Terminal States](#terminal-states-require-human-action)
+  - [Verification](#verification-how-fixes-are-confirmed)
+  - [Surgical Queue](#surgical-queue-one-fix-per-repo-at-a-time)
 - [Overview](#overview)
 - [Features](#features)
 - [Architecture](#architecture)

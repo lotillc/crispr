@@ -186,18 +186,90 @@ impl GitHubClient {
         repo: &str,
         title: &str,
         body: &str,
-        labels: Option<Vec<String>>,
+        labels: &[String],
+        assignees: &[String],
     ) -> Result<GitHubIssue> {
         let mut request = serde_json::json!({
             "title": title,
             "body": body
         });
 
+        if !labels.is_empty() {
+            request["labels"] = serde_json::json!(labels);
+        }
+
+        if !assignees.is_empty() {
+            request["assignees"] = serde_json::json!(assignees);
+        }
+
+        let response = self.post(&format!("/repos/{}/{}/issues", owner, repo), &request).await?;
+        Ok(serde_json::from_value(response)?)
+    }
+
+    /// Update a GitHub issue
+    pub async fn update_issue(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: i32,
+        title: Option<&str>,
+        body: Option<&str>,
+        labels: Option<&[String]>,
+    ) -> Result<GitHubIssue> {
+        let mut request = serde_json::json!({});
+
+        if let Some(t) = title {
+            request["title"] = serde_json::json!(t);
+        }
+
+        if let Some(b) = body {
+            request["body"] = serde_json::json!(b);
+        }
+
         if let Some(l) = labels {
             request["labels"] = serde_json::json!(l);
         }
 
-        let response = self.post(&format!("/repos/{}/{}/issues", owner, repo), &request).await?;
+        let response = self.patch(&format!("/repos/{}/{}/issues/{}", owner, repo, issue_number), &request).await?;
+        Ok(serde_json::from_value(response)?)
+    }
+
+    /// Close a GitHub issue
+    pub async fn close_issue(&self, owner: &str, repo: &str, issue_number: i32) -> Result<GitHubIssue> {
+        let request = serde_json::json!({
+            "state": "closed"
+        });
+
+        let response = self.patch(&format!("/repos/{}/{}/issues/{}", owner, repo, issue_number), &request).await?;
+        Ok(serde_json::from_value(response)?)
+    }
+
+    /// Reopen a GitHub issue
+    pub async fn reopen_issue(&self, owner: &str, repo: &str, issue_number: i32) -> Result<GitHubIssue> {
+        let request = serde_json::json!({
+            "state": "open"
+        });
+
+        let response = self.patch(&format!("/repos/{}/{}/issues/{}", owner, repo, issue_number), &request).await?;
+        Ok(serde_json::from_value(response)?)
+    }
+
+    /// Add a comment to an issue
+    pub async fn add_issue_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: i32,
+        body: &str,
+    ) -> Result<GitHubComment> {
+        let request = serde_json::json!({
+            "body": body
+        });
+
+        let response = self.post(
+            &format!("/repos/{}/{}/issues/{}/comments", owner, repo, issue_number),
+            &request
+        ).await?;
         Ok(serde_json::from_value(response)?)
     }
 
@@ -347,6 +419,28 @@ impl GitHubClient {
 
         Ok(())
     }
+
+    async fn patch(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
+        let token = self.token.read().await;
+        let token = token.as_ref().ok_or_else(|| anyhow::anyhow!("GitHub not connected"))?;
+
+        let response = self.client
+            .patch(format!("{}{}", GITHUB_API_URL, path))
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .json(body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("GitHub API error {}: {}", status, error_text));
+        }
+
+        Ok(response.json().await?)
+    }
 }
 
 /// Initialize GitHub client
@@ -492,4 +586,12 @@ pub struct WebhookConfig {
     pub url: Option<String>,
     pub content_type: Option<String>,
     pub insecure_ssl: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GitHubComment {
+    pub id: i64,
+    pub body: String,
+    pub html_url: String,
+    pub created_at: String,
 }

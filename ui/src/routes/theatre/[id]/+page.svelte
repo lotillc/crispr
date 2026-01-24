@@ -6,6 +6,8 @@
 	import type { Project, Incident, Sample, ActivityLog, GeneratedTest } from '$lib/api';
 	import Breadcrumb from '$lib/components/Breadcrumb.svelte';
 	import GeneratedTests from '$lib/components/GeneratedTests.svelte';
+	import ExternalIssues from '$lib/components/ExternalIssues.svelte';
+	import IssueTrackerSettings from '$lib/components/IssueTrackerSettings.svelte';
 	import { getMockGeneratedTests } from '$lib/mockData';
 
 	let projectId = $derived($page.params.id);
@@ -21,6 +23,7 @@
 	let generatedTests = $state<GeneratedTest[]>([]);
 	let loadingTests = $state(false);
 	let togglingTest = $state(false);
+	let showProjectSettings = $state(false);
 
 	onMount(async () => {
 		if (projectId) {
@@ -127,6 +130,9 @@
 			case 'fixing': return 'Operating';
 			case 'pr_open': return 'Awaiting Approval';
 			case 'pr_merged': return 'Discharged';
+			case 'verifying': return 'Verifying';
+			case 'verified': return 'Verified';
+			case 'pending_verification': return 'Pending Verification';
 			case 'ignored': return 'Dismissed';
 			case 'max_attempts': return 'Requires Specialist';
 			default: return status;
@@ -137,9 +143,48 @@
 		if (['fixing', 'triaging'].includes(status)) return 'badge-surgery';
 		if (['detected', 'pending_fix'].includes(status)) return 'badge-observation';
 		if (['pr_open'].includes(status)) return 'badge-healthy';
+		if (['verifying', 'pending_verification'].includes(status)) return 'badge-verifying';
+		if (['verified'].includes(status)) return 'badge-verified';
 		if (['unfixable', 'max_attempts'].includes(status)) return 'badge-critical';
 		return 'badge-discharged';
 	}
+
+	function formatDuration(hours: number): string {
+		if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''}`;
+		const days = Math.floor(hours / 24);
+		if (days < 7) return `${days} day${days !== 1 ? 's' : ''}`;
+		const weeks = Math.floor(days / 7);
+		if (weeks < 4) return `${weeks} week${weeks !== 1 ? 's' : ''}`;
+		const months = Math.floor(days / 30);
+		return `${months} month${months !== 1 ? 's' : ''}`;
+	}
+
+	function getVerificationProgress(incident: typeof selectedIncident): { percent: number; elapsed: string; remaining: string } {
+		if (!incident?.verification_started_at || !incident?.verification_duration_hours) {
+			return { percent: 0, elapsed: '0h', remaining: 'unknown' };
+		}
+		const started = new Date(incident.verification_started_at);
+		const now = new Date();
+		const totalMs = incident.verification_duration_hours * 60 * 60 * 1000;
+		const elapsedMs = now.getTime() - started.getTime();
+		const remainingMs = Math.max(0, totalMs - elapsedMs);
+
+		const percent = Math.min(100, Math.round((elapsedMs / totalMs) * 100));
+
+		const elapsedHours = Math.floor(elapsedMs / (60 * 60 * 1000));
+		const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+
+		return {
+			percent,
+			elapsed: formatDuration(elapsedHours),
+			remaining: remainingHours > 0 ? formatDuration(remainingHours) : 'Complete'
+		};
+	}
+
+	// Determine if incident is in a verification-related state
+	let isInVerification = $derived(
+		selectedIncident && ['verifying', 'verified', 'pending_verification'].includes(selectedIncident.status)
+	);
 
 	function formatTime(dateStr: string): string {
 		return new Date(dateStr).toLocaleString();
@@ -199,6 +244,12 @@
 					<span class="stat-label">Cost</span>
 				</div>
 			</div>
+			<button class="btn btn-secondary settings-btn" onclick={() => showProjectSettings = true} title="Project Settings">
+				<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+					<path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+				</svg>
+				Settings
+			</button>
 		{/if}
 	</header>
 
@@ -288,27 +339,108 @@
 					<section class="pipeline-section" aria-label="Incident progress">
 						<h3 id="pipeline-heading">Pipeline Status</h3>
 						<div class="pipeline" role="list" aria-labelledby="pipeline-heading">
-							<div class="pipeline-step" class:complete={['triaging', 'unfixable', 'pending_fix', 'fixing', 'pr_open', 'pr_merged'].includes(selectedIncident.status)} class:active={selectedIncident.status === 'detected'}>
+							<div class="pipeline-step" class:complete={['triaging', 'unfixable', 'pending_fix', 'fixing', 'pr_open', 'pr_merged', 'verifying', 'verified', 'pending_verification'].includes(selectedIncident.status)} class:active={selectedIncident.status === 'detected'}>
 								<span class="step-icon">1</span>
 								<span class="step-label">Detected</span>
 							</div>
-							<div class="pipeline-connector" class:complete={['triaging', 'unfixable', 'pending_fix', 'fixing', 'pr_open', 'pr_merged'].includes(selectedIncident.status)}></div>
-							<div class="pipeline-step" class:complete={['unfixable', 'pending_fix', 'fixing', 'pr_open', 'pr_merged'].includes(selectedIncident.status)} class:active={selectedIncident.status === 'triaging'}>
+							<div class="pipeline-connector" class:complete={['triaging', 'unfixable', 'pending_fix', 'fixing', 'pr_open', 'pr_merged', 'verifying', 'verified', 'pending_verification'].includes(selectedIncident.status)}></div>
+							<div class="pipeline-step" class:complete={['unfixable', 'pending_fix', 'fixing', 'pr_open', 'pr_merged', 'verifying', 'verified', 'pending_verification'].includes(selectedIncident.status)} class:active={selectedIncident.status === 'triaging'}>
 								<span class="step-icon">2</span>
 								<span class="step-label">Analyzing</span>
 							</div>
-							<div class="pipeline-connector" class:complete={['fixing', 'pr_open', 'pr_merged'].includes(selectedIncident.status)}></div>
-							<div class="pipeline-step" class:complete={['pr_open', 'pr_merged'].includes(selectedIncident.status)} class:active={selectedIncident.status === 'fixing'}>
+							<div class="pipeline-connector" class:complete={['fixing', 'pr_open', 'pr_merged', 'verifying', 'verified', 'pending_verification'].includes(selectedIncident.status)}></div>
+							<div class="pipeline-step" class:complete={['pr_open', 'pr_merged', 'verifying', 'verified', 'pending_verification'].includes(selectedIncident.status)} class:active={selectedIncident.status === 'fixing'}>
 								<span class="step-icon">3</span>
 								<span class="step-label">Operating</span>
 							</div>
-							<div class="pipeline-connector" class:complete={['pr_merged'].includes(selectedIncident.status)}></div>
-							<div class="pipeline-step" class:complete={selectedIncident.status === 'pr_merged'} class:active={selectedIncident.status === 'pr_open'}>
+							<div class="pipeline-connector" class:complete={['pr_merged', 'verifying', 'verified', 'pending_verification'].includes(selectedIncident.status)}></div>
+							<div class="pipeline-step" class:complete={['pr_merged', 'verifying', 'verified', 'pending_verification'].includes(selectedIncident.status)} class:active={selectedIncident.status === 'pr_open'}>
 								<span class="step-icon">4</span>
 								<span class="step-label">Discharged</span>
 							</div>
 						</div>
 					</section>
+
+					<!-- Verification Monitoring (shown for incidents in verification states) -->
+					{#if isInVerification}
+						{@const progress = getVerificationProgress(selectedIncident)}
+						<section class="verification-monitoring-section">
+							<h3>
+								<svg viewBox="0 0 20 20" fill="currentColor" class="section-icon">
+									<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+								</svg>
+								Verification Monitoring
+							</h3>
+
+							<div class="verification-card">
+								<!-- Status header -->
+								<div class="verification-status-header">
+									{#if selectedIncident.verification_status === 'verified'}
+										<span class="verification-badge verified">
+											<svg viewBox="0 0 20 20" fill="currentColor">
+												<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+											</svg>
+											Fix Verified
+										</span>
+										<span class="verification-meta">No recurrence after {formatDuration(selectedIncident.verification_duration_hours || 24)}</span>
+									{:else if selectedIncident.recurrence_count && selectedIncident.recurrence_count > 0}
+										<span class="verification-badge recurred">
+											<svg viewBox="0 0 20 20" fill="currentColor">
+												<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+											</svg>
+											Recurrence Detected
+										</span>
+										<span class="verification-meta">{selectedIncident.recurrence_count} new occurrence{selectedIncident.recurrence_count !== 1 ? 's' : ''} since fix</span>
+									{:else}
+										<span class="verification-badge monitoring">
+											<svg viewBox="0 0 20 20" fill="currentColor">
+												<path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+												<path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+											</svg>
+											Monitoring
+										</span>
+										<span class="verification-meta">Looking good so far</span>
+									{/if}
+								</div>
+
+								<!-- Progress bar -->
+								{#if selectedIncident.verification_status !== 'verified'}
+									<div class="verification-progress">
+										<div class="progress-header">
+											<span class="progress-elapsed">{progress.elapsed} elapsed</span>
+											<span class="progress-remaining">{progress.remaining} remaining</span>
+										</div>
+										<div class="progress-bar-container">
+											<div class="progress-bar-fill" style="width: {progress.percent}%"></div>
+										</div>
+										<div class="progress-footer">
+											<span>Started {formatTime(selectedIncident.verification_started_at || '')}</span>
+											<span>Ends {formatTime(selectedIncident.verification_ends_at || '')}</span>
+										</div>
+									</div>
+								{/if}
+
+								<!-- Duration info -->
+								<div class="verification-duration-info">
+									<div class="duration-header">
+										<span class="duration-label">Monitoring Period:</span>
+										<span class="duration-value">{formatDuration(selectedIncident.verification_duration_hours || 24)}</span>
+									</div>
+									{#if selectedIncident.triage_result?.verification_reasoning}
+										<p class="duration-reasoning">{selectedIncident.triage_result.verification_reasoning}</p>
+									{/if}
+								</div>
+
+								<!-- Expected behavior being validated -->
+								{#if selectedIncident.triage_result?.expected_behavior}
+									<div class="expected-behavior-check">
+										<span class="expected-label">Validating:</span>
+										<span class="expected-value">{selectedIncident.triage_result.expected_behavior}</span>
+									</div>
+								{/if}
+							</div>
+						</section>
+					{/if}
 
 					<!-- Triage Result -->
 					{#if selectedIncident.triage_result}
@@ -358,6 +490,9 @@
 						onToggleInclude={handleToggleTestInclude}
 					/>
 
+					<!-- External Issues -->
+					<ExternalIssues incidentId={selectedIncident.id} />
+
 					<!-- Sample -->
 					{#if selectedIncident.samples.length > 0}
 						<section class="sample-section" aria-label="Error sample">
@@ -404,6 +539,25 @@
 		</main>
 	</div>
 </div>
+
+<!-- Project Settings Modal -->
+{#if showProjectSettings && project}
+	<div class="modal-overlay" onclick={() => showProjectSettings = false}>
+		<div class="modal modal-lg" onclick={(e) => e.stopPropagation()}>
+			<div class="modal-header">
+				<h3>Project Settings - {project.repo}</h3>
+				<button class="modal-close" onclick={() => showProjectSettings = false}>
+					<svg viewBox="0 0 20 20" fill="currentColor">
+						<path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+					</svg>
+				</button>
+			</div>
+			<div class="modal-body">
+				<IssueTrackerSettings projectId={project.id} />
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.theatre {
@@ -465,6 +619,13 @@
 	.theatre-stats {
 		display: flex;
 		gap: var(--space-xl);
+	}
+
+	.settings-btn {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		margin-left: var(--space-md);
 	}
 
 	.stat {
@@ -866,6 +1027,260 @@
 		color: var(--graphite);
 	}
 
+	/* Verification Monitoring */
+	.verification-monitoring-section {
+		margin-top: var(--space-lg);
+	}
+
+	.verification-monitoring-section h3 {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		font-size: 1rem;
+		font-weight: 600;
+		color: var(--charcoal);
+		margin-bottom: var(--space-md);
+	}
+
+	.section-icon {
+		width: 20px;
+		height: 20px;
+		color: var(--scrubs);
+	}
+
+	.verification-card {
+		background: linear-gradient(135deg, var(--scrubs-soft), var(--stable-soft));
+		border: 1px solid var(--scrubs);
+		border-radius: var(--radius-lg);
+		padding: var(--space-lg);
+	}
+
+	.verification-status-header {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		margin-bottom: var(--space-lg);
+	}
+
+	.verification-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius-full);
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+
+	.verification-badge svg {
+		width: 16px;
+		height: 16px;
+	}
+
+	.verification-badge.verified {
+		background: var(--scrubs);
+		color: white;
+	}
+
+	.verification-badge.monitoring {
+		background: var(--white);
+		color: var(--scrubs-dark);
+		border: 1px solid var(--scrubs);
+		animation: pulse-border 2s infinite;
+	}
+
+	@keyframes pulse-border {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(34, 139, 34, 0.4); }
+		50% { box-shadow: 0 0 0 4px rgba(34, 139, 34, 0); }
+	}
+
+	.verification-badge.recurred {
+		background: var(--alert);
+		color: white;
+	}
+
+	.verification-meta {
+		font-size: 0.8125rem;
+		color: var(--graphite);
+	}
+
+	.verification-progress {
+		background: var(--white);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		margin-bottom: var(--space-md);
+	}
+
+	.progress-header {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.75rem;
+		color: var(--slate);
+		margin-bottom: var(--space-xs);
+	}
+
+	.progress-elapsed {
+		font-weight: 600;
+		color: var(--scrubs-dark);
+	}
+
+	.progress-bar-container {
+		height: 8px;
+		background: var(--paper);
+		border-radius: var(--radius-full);
+		overflow: hidden;
+		margin-bottom: var(--space-xs);
+	}
+
+	.progress-bar-fill {
+		height: 100%;
+		background: linear-gradient(90deg, var(--scrubs), var(--stable));
+		border-radius: var(--radius-full);
+		transition: width 0.5s ease;
+	}
+
+	.progress-footer {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.6875rem;
+		color: var(--slate);
+	}
+
+	.verification-duration-info {
+		background: var(--white);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		margin-bottom: var(--space-md);
+	}
+
+	.duration-header {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		margin-bottom: var(--space-xs);
+	}
+
+	.duration-label {
+		font-size: 0.8125rem;
+		color: var(--graphite);
+	}
+
+	.duration-value {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--charcoal);
+	}
+
+	.duration-reasoning {
+		font-size: 0.8125rem;
+		color: var(--slate);
+		line-height: 1.5;
+		margin: 0;
+		font-style: italic;
+	}
+
+	.expected-behavior-check {
+		background: var(--white);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		border-left: 3px solid var(--scrubs);
+	}
+
+	.expected-label {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--scrubs-dark);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		display: block;
+		margin-bottom: var(--space-xs);
+	}
+
+	.expected-value {
+		font-size: 0.875rem;
+		color: var(--charcoal);
+		line-height: 1.5;
+	}
+
+	.badge-verifying {
+		background: var(--scrubs-soft);
+		color: var(--scrubs-dark);
+	}
+
+	.badge-verified {
+		background: var(--scrubs);
+		color: white;
+	}
+
+	/* Modal */
+	.modal-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+	}
+
+	.modal {
+		background: var(--white);
+		border-radius: var(--radius-xl);
+		width: 100%;
+		max-width: 480px;
+		box-shadow: var(--shadow-xl);
+		max-height: 90vh;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.modal.modal-lg {
+		max-width: 800px;
+	}
+
+	.modal-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-lg);
+		border-bottom: 1px solid var(--silver);
+		flex-shrink: 0;
+	}
+
+	.modal-header h3 {
+		font-family: var(--font-body);
+		font-size: 1.125rem;
+		font-weight: 600;
+	}
+
+	.modal-close {
+		width: 32px;
+		height: 32px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: var(--radius-md);
+		background: transparent;
+		color: var(--graphite);
+		border: none;
+		cursor: pointer;
+	}
+
+	.modal-close:hover {
+		background: var(--paper);
+	}
+
+	.modal-close svg {
+		width: 20px;
+		height: 20px;
+	}
+
+	.modal-body {
+		padding: var(--space-lg);
+		overflow-y: auto;
+		flex: 1;
+	}
+
 	@media (max-width: 1024px) {
 		.theatre-body {
 			flex-direction: column;
@@ -874,6 +1289,20 @@
 		.incident-list {
 			width: 100%;
 			max-height: 300px;
+		}
+
+		.modal {
+			margin: var(--space-md);
+			max-width: calc(100% - var(--space-xl));
+		}
+
+		.settings-btn {
+			margin-left: 0;
+			margin-top: var(--space-sm);
+		}
+
+		.theatre-header {
+			flex-wrap: wrap;
 		}
 	}
 </style>

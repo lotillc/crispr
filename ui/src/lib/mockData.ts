@@ -1,5 +1,5 @@
 // Mock data for demo mode
-import type { Project, Incident, AuthStatus, UsageSummary, IncidentStats, GeneratedTest } from './api';
+import type { Project, Incident, AuthStatus, UsageSummary, IncidentStats, GeneratedTest, VerificationRound, VerificationSummary } from './api';
 
 export const mockProjects: Project[] = [
 	{
@@ -96,13 +96,20 @@ export const mockIncidents: Incident[] = [
 		fingerprint: 'fp-ghi789',
 		level: 'error',
 		message: "ReferenceError: getProfile is not defined",
-		status: 'pr_merged',
+		status: 'verifying',
 		sample_count: 56,
-		first_seen: '2024-01-19T15:00:00Z',
-		last_seen: '2024-01-19T15:30:00Z',
+		first_seen: '2026-01-22T15:00:00Z',
+		last_seen: '2026-01-22T15:30:00Z',
 		fix_attempts: 1,
 		pr_url: 'https://github.com/acme/user-service/pull/89',
 		pr_number: 89,
+		pr_merged_at: '2026-01-23T10:00:00Z',
+		verification_round: 2,
+		verification_status: 'verifying',
+		verification_duration_hours: 24,
+		verification_started_at: '2026-01-23T10:00:00Z',
+		verification_ends_at: '2026-01-24T10:00:00Z',
+		recurrence_count: 0,
 		triage_result: {
 			fixable: true,
 			confidence: 0.95,
@@ -110,7 +117,11 @@ export const mockIncidents: Incident[] = [
 			category: 'missing_import',
 			suggested_files: ['src/controllers/user.ts'],
 			description: 'Function not imported from utils module',
-			fix_approach: 'Add missing import statement'
+			fix_approach: 'Add missing import statement',
+			what_changed: 'Added the missing import for getProfile from utils/profile',
+			expected_behavior: 'UserController.show() successfully calls getProfile and returns user data',
+			recommended_verification_hours: 24,
+			verification_reasoning: 'Missing import is a deterministic error - it either works or it does not. 24-hour monitoring is sufficient to confirm the fix works across all code paths that call this function.'
 		}
 	},
 	{
@@ -193,6 +204,139 @@ export const mockIncidents: Incident[] = [
 			what_changed: 'Added response content-type validation before JSON parsing. When the response is not application/json, the client now throws a descriptive ApiError with the status code and a helpful message instead of attempting to parse HTML.',
 			expected_behavior: 'API errors will be caught and reported with meaningful error messages. The application will gracefully handle upstream service failures instead of crashing on parse errors.'
 		}
+	},
+	// Verification lifecycle examples
+	{
+		id: 'inc-9',
+		project_id: 'proj-1',
+		fingerprint: 'fp-ver001',
+		level: 'error',
+		message: "NullPointerException: session.getAttribute() returned null",
+		status: 'verifying',
+		sample_count: 312,
+		first_seen: '2026-01-20T08:00:00Z',
+		last_seen: '2026-01-22T14:00:00Z',
+		fix_attempts: 1,
+		pr_url: 'https://github.com/acme/payments-api/pull/138',
+		pr_number: 138,
+		pr_merged_at: '2026-01-22T16:00:00Z',
+		verification_round: 3,
+		verification_status: 'verifying',
+		verification_duration_hours: 48,
+		verification_started_at: '2026-01-22T16:00:00Z',
+		verification_ends_at: '2026-01-24T16:00:00Z',
+		recurrence_count: 0,
+		triage_result: {
+			fixable: true,
+			confidence: 0.91,
+			reason: 'Session attribute access without null check',
+			category: 'null_reference',
+			suggested_files: ['src/middleware/session.ts'],
+			description: 'Session attribute accessed before confirming session validity',
+			fix_approach: 'Add session validation before accessing attributes',
+			what_changed: 'Added early session validation with proper error response',
+			expected_behavior: 'Invalid sessions return 401 instead of throwing NPE',
+			recommended_verification_hours: 48,
+			verification_reasoning: 'Session issues typically surface within 24-48 hours as users cycle through login/logout flows. Monitoring for 2 days covers weekday and weekend traffic patterns.'
+		}
+	},
+	{
+		id: 'inc-10',
+		project_id: 'proj-2',
+		fingerprint: 'fp-ver002',
+		level: 'error',
+		message: "TypeError: Cannot read properties of undefined (reading 'map')",
+		status: 'verified',
+		sample_count: 89,
+		first_seen: '2024-01-10T10:00:00Z',
+		last_seen: '2024-01-12T09:00:00Z',
+		fix_attempts: 1,
+		pr_url: 'https://github.com/acme/user-service/pull/85',
+		pr_number: 85,
+		pr_merged_at: '2024-01-12T14:00:00Z',
+		verification_round: 3,
+		verification_status: 'verified',
+		verified_at: '2024-01-13T14:00:00Z',
+		verification_duration_hours: 24,
+		verification_started_at: '2024-01-12T14:00:00Z',
+		verification_ends_at: '2024-01-13T14:00:00Z',
+		recurrence_count: 0,
+		triage_result: {
+			fixable: true,
+			confidence: 0.94,
+			reason: 'Array method called on undefined',
+			category: 'undefined_access',
+			suggested_files: ['src/components/UserList.tsx'],
+			description: 'users.map() called when API returns undefined instead of empty array',
+			fix_approach: 'Add default empty array fallback',
+			what_changed: 'Added nullish coalescing: (users ?? []).map()',
+			expected_behavior: 'Component renders empty state when no users returned',
+			recommended_verification_hours: 24,
+			verification_reasoning: 'Simple null check fix with high confidence. Standard 24-hour monitoring sufficient to catch any edge cases in normal user flows.'
+		}
+	},
+	{
+		id: 'inc-11',
+		project_id: 'proj-1',
+		fingerprint: 'fp-ver003',
+		level: 'error',
+		message: "ConnectionResetError: Connection reset by peer during transaction",
+		status: 'verifying',
+		sample_count: 156,
+		first_seen: '2026-01-15T11:00:00Z',
+		last_seen: '2026-01-18T15:30:00Z',
+		fix_attempts: 1,
+		pr_url: 'https://github.com/acme/payments-api/pull/140',
+		pr_number: 140,
+		pr_merged_at: '2026-01-20T09:00:00Z',
+		verification_round: 1,
+		verification_status: 'verifying',
+		verification_duration_hours: 168,
+		verification_started_at: '2026-01-20T09:00:00Z',
+		verification_ends_at: '2026-01-27T09:00:00Z',
+		recurrence_count: 0,
+		triage_result: {
+			fixable: true,
+			confidence: 0.72,
+			reason: 'Connection not properly handled during network issues',
+			category: 'network_error',
+			suggested_files: ['src/db/transaction.ts'],
+			description: 'Database transactions fail silently when connection drops',
+			fix_approach: 'Add retry logic and proper connection pooling',
+			what_changed: 'Implemented connection health checks and automatic retry',
+			expected_behavior: 'Transactions retry on transient network failures',
+			recommended_verification_hours: 168,
+			verification_reasoning: 'Network issues are often transient and load-dependent. This error occurred sporadically over 3 days. Recommend 7-day monitoring to capture various traffic patterns and potential infrastructure events.'
+		}
+	},
+	{
+		id: 'inc-12',
+		project_id: 'proj-3',
+		fingerprint: 'fp-ver004',
+		level: 'error',
+		message: "RateLimitError: API rate limit exceeded",
+		status: 'pending_verification',
+		sample_count: 234,
+		first_seen: '2026-01-10T09:00:00Z',
+		last_seen: '2026-01-23T08:00:00Z',
+		fix_attempts: 1,
+		pr_url: 'https://github.com/acme/notification-worker/pull/45',
+		pr_number: 45,
+		pr_merged_at: '2026-01-24T10:00:00Z',
+		verification_duration_hours: 720,
+		triage_result: {
+			fixable: true,
+			confidence: 0.88,
+			reason: 'No rate limiting on outbound API calls',
+			category: 'rate_limit',
+			suggested_files: ['src/services/email.ts', 'src/utils/rateLimit.ts'],
+			description: 'Burst of notifications triggers external API rate limits',
+			fix_approach: 'Add token bucket rate limiter for outbound calls',
+			what_changed: 'Implemented rate limiter with exponential backoff',
+			expected_behavior: 'Notifications queue and send within rate limits',
+			recommended_verification_hours: 720,
+			verification_reasoning: 'Rate limit errors depend on usage volume. This service handles marketing campaigns which spike at month-end. Recommend 30-day monitoring to cover a full billing cycle and catch any edge cases in high-volume periods.'
+		}
 	}
 ];
 
@@ -255,18 +399,21 @@ export const mockUsageSummary: UsageSummary = {
 };
 
 export const mockIncidentStats: IncidentStats = {
-	total: 47,
+	total: 52,
 	by_status: {
-		detected: 3,
-		triaging: 2,
+		detected: 2,
+		triaging: 1,
 		fixing: 1,
-		pr_open: 4,
-		pr_merged: 28,
+		pr_open: 2,
+		pr_merged: 22,
+		verifying: 4,
+		verified: 8,
+		pending_verification: 1,
 		unfixable: 5,
-		ignored: 4
+		ignored: 6
 	},
 	fixed_today: 3,
-	fixed_week: 12,
+	fixed_week: 15,
 	avg_fix_time_hours: 2.4
 };
 
@@ -386,7 +533,10 @@ export const mockActivityLogs: Record<string, Array<{ id: string; incident_id: s
 		{ id: 'act-3a', incident_id: 'inc-3', action: 'Incident detected', created_at: '2024-01-19T15:00:00Z' },
 		{ id: 'act-3b', incident_id: 'inc-3', action: 'Triage complete', details: 'Missing import - high confidence fix', created_at: '2024-01-19T15:01:30Z' },
 		{ id: 'act-3c', incident_id: 'inc-3', action: 'PR created', details: 'PR #89 opened', created_at: '2024-01-19T15:03:00Z' },
-		{ id: 'act-3d', incident_id: 'inc-3', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-19T16:30:00Z' }
+		{ id: 'act-3d', incident_id: 'inc-3', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-19T16:30:00Z' },
+		{ id: 'act-3e', incident_id: 'inc-3', action: 'Verification started', details: 'Round 1 of 3 (1 hour)', created_at: '2024-01-19T16:30:00Z' },
+		{ id: 'act-3f', incident_id: 'inc-3', action: 'Verification round passed', details: 'Round 1: No ReferenceError occurrences in 1 hour', created_at: '2024-01-19T17:30:00Z' },
+		{ id: 'act-3g', incident_id: 'inc-3', action: 'Verification in progress', details: 'Round 2: Monitoring for 6 hours', created_at: '2024-01-19T17:30:00Z' }
 	],
 	'inc-4': [
 		{ id: 'act-4a', incident_id: 'inc-4', action: 'Incident detected', created_at: '2024-01-22T11:00:00Z' },
@@ -404,6 +554,40 @@ export const mockActivityLogs: Record<string, Array<{ id: string; incident_id: s
 		{ id: 'act-8a', incident_id: 'inc-8', action: 'Incident detected', created_at: '2024-01-22T09:00:00Z' },
 		{ id: 'act-8b', incident_id: 'inc-8', action: 'Triage complete', details: 'JSON parse error - fixable', created_at: '2024-01-22T09:01:45Z' },
 		{ id: 'act-8c', incident_id: 'inc-8', action: 'PR created', details: 'PR #91 opened', created_at: '2024-01-22T09:05:00Z' }
+	],
+	'inc-9': [
+		{ id: 'act-9a', incident_id: 'inc-9', action: 'Incident detected', details: 'First occurrence captured', created_at: '2024-01-15T08:00:00Z' },
+		{ id: 'act-9b', incident_id: 'inc-9', action: 'Triage complete', details: 'Session null check - 91% confidence', created_at: '2024-01-15T08:02:00Z' },
+		{ id: 'act-9c', incident_id: 'inc-9', action: 'PR created', details: 'PR #138 opened on acme/payments-api', created_at: '2024-01-20T10:00:00Z' },
+		{ id: 'act-9d', incident_id: 'inc-9', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-20T16:00:00Z' },
+		{ id: 'act-9e', incident_id: 'inc-9', action: 'Verification started', details: 'Round 1 of 3 (1 hour)', created_at: '2024-01-20T16:00:00Z' },
+		{ id: 'act-9f', incident_id: 'inc-9', action: 'Verification round passed', details: 'Round 1: No new occurrences in 1 hour', created_at: '2024-01-20T17:00:00Z' },
+		{ id: 'act-9g', incident_id: 'inc-9', action: 'Verification round passed', details: 'Round 2: No new occurrences in 6 hours', created_at: '2024-01-20T23:00:00Z' },
+		{ id: 'act-9h', incident_id: 'inc-9', action: 'Verification in progress', details: 'Round 3: Monitoring for 24 hours - Expected: Invalid sessions return 401 instead of NPE', created_at: '2024-01-20T23:00:00Z' }
+	],
+	'inc-10': [
+		{ id: 'act-10a', incident_id: 'inc-10', action: 'Incident detected', created_at: '2024-01-10T10:00:00Z' },
+		{ id: 'act-10b', incident_id: 'inc-10', action: 'Triage complete', details: 'Array undefined access - 94% confidence', created_at: '2024-01-10T10:01:30Z' },
+		{ id: 'act-10c', incident_id: 'inc-10', action: 'PR created', details: 'PR #85 opened', created_at: '2024-01-12T09:00:00Z' },
+		{ id: 'act-10d', incident_id: 'inc-10', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-12T14:00:00Z' },
+		{ id: 'act-10e', incident_id: 'inc-10', action: 'Verification started', details: 'Round 1 of 3', created_at: '2024-01-12T14:00:00Z' },
+		{ id: 'act-10f', incident_id: 'inc-10', action: 'Verification round passed', details: 'Round 1: Confirmed empty state renders correctly', created_at: '2024-01-12T15:00:00Z' },
+		{ id: 'act-10g', incident_id: 'inc-10', action: 'Verification round passed', details: 'Round 2: No errors during 6-hour monitoring', created_at: '2024-01-12T21:00:00Z' },
+		{ id: 'act-10h', incident_id: 'inc-10', action: 'Verification complete', details: 'All 3 rounds passed - Fix verified working as expected', created_at: '2024-01-13T14:00:00Z' }
+	],
+	'inc-11': [
+		{ id: 'act-11a', incident_id: 'inc-11', action: 'Incident detected', created_at: '2024-01-18T11:00:00Z' },
+		{ id: 'act-11b', incident_id: 'inc-11', action: 'Triage complete', details: 'Connection handling issue - 72% confidence', created_at: '2024-01-18T11:02:00Z' },
+		{ id: 'act-11c', incident_id: 'inc-11', action: 'PR created', details: 'PR #140 opened', created_at: '2024-01-21T14:00:00Z' },
+		{ id: 'act-11d', incident_id: 'inc-11', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-21T17:00:00Z' },
+		{ id: 'act-11e', incident_id: 'inc-11', action: 'Verification started', details: 'Round 1 of 3 - Monitoring for transient retries', created_at: '2024-01-21T17:00:00Z' }
+	],
+	'inc-12': [
+		{ id: 'act-12a', incident_id: 'inc-12', action: 'Incident detected', created_at: '2024-01-17T09:00:00Z' },
+		{ id: 'act-12b', incident_id: 'inc-12', action: 'Triage complete', details: 'Rate limiting needed - 88% confidence', created_at: '2024-01-17T09:02:00Z' },
+		{ id: 'act-12c', incident_id: 'inc-12', action: 'PR created', details: 'PR #45 opened', created_at: '2024-01-22T08:00:00Z' },
+		{ id: 'act-12d', incident_id: 'inc-12', action: 'PR merged', details: 'Fix deployed to production', created_at: '2024-01-22T10:00:00Z' },
+		{ id: 'act-12e', incident_id: 'inc-12', action: 'Pending verification', details: 'Waiting for verification slot - Expected: Notifications queue within rate limits', created_at: '2024-01-22T10:00:00Z' }
 	]
 };
 
@@ -663,6 +847,171 @@ describe('ApiClient Integration', () => {
 // Get mock generated tests for an incident
 export function getMockGeneratedTests(incidentId: string): GeneratedTest[] {
 	return mockGeneratedTests[incidentId] || [];
+}
+
+// Mock verification rounds data
+export const mockVerificationRounds: Record<string, VerificationSummary> = {
+	'inc-3': {
+		incident_id: 'inc-3',
+		status: 'verifying',
+		current_round: 2,
+		total_rounds: 3,
+		started_at: '2024-01-19T16:30:00Z',
+		rounds: [
+			{
+				id: 'vr-3a',
+				incident_id: 'inc-3',
+				round_number: 1,
+				started_at: '2024-01-19T16:30:00Z',
+				completed_at: '2024-01-19T17:30:00Z',
+				status: 'passed',
+				occurrence_count_start: 56,
+				occurrence_count_end: 56,
+				duration_hours: 1
+			},
+			{
+				id: 'vr-3b',
+				incident_id: 'inc-3',
+				round_number: 2,
+				started_at: '2024-01-19T17:30:00Z',
+				status: 'monitoring',
+				occurrence_count_start: 56,
+				duration_hours: 6
+			}
+		]
+	},
+	'inc-9': {
+		incident_id: 'inc-9',
+		status: 'verifying',
+		current_round: 3,
+		total_rounds: 3,
+		started_at: '2024-01-20T16:00:00Z',
+		rounds: [
+			{
+				id: 'vr-9a',
+				incident_id: 'inc-9',
+				round_number: 1,
+				started_at: '2024-01-20T16:00:00Z',
+				completed_at: '2024-01-20T17:00:00Z',
+				status: 'passed',
+				occurrence_count_start: 312,
+				occurrence_count_end: 312,
+				duration_hours: 1
+			},
+			{
+				id: 'vr-9b',
+				incident_id: 'inc-9',
+				round_number: 2,
+				started_at: '2024-01-20T17:00:00Z',
+				completed_at: '2024-01-20T23:00:00Z',
+				status: 'passed',
+				occurrence_count_start: 312,
+				occurrence_count_end: 312,
+				duration_hours: 6
+			},
+			{
+				id: 'vr-9c',
+				incident_id: 'inc-9',
+				round_number: 3,
+				started_at: '2024-01-20T23:00:00Z',
+				status: 'monitoring',
+				occurrence_count_start: 312,
+				duration_hours: 24
+			}
+		]
+	},
+	'inc-10': {
+		incident_id: 'inc-10',
+		status: 'verified',
+		current_round: 3,
+		total_rounds: 3,
+		started_at: '2024-01-12T14:00:00Z',
+		verified_at: '2024-01-13T14:00:00Z',
+		rounds: [
+			{
+				id: 'vr-10a',
+				incident_id: 'inc-10',
+				round_number: 1,
+				started_at: '2024-01-12T14:00:00Z',
+				completed_at: '2024-01-12T15:00:00Z',
+				status: 'passed',
+				occurrence_count_start: 89,
+				occurrence_count_end: 89,
+				duration_hours: 1
+			},
+			{
+				id: 'vr-10b',
+				incident_id: 'inc-10',
+				round_number: 2,
+				started_at: '2024-01-12T15:00:00Z',
+				completed_at: '2024-01-12T21:00:00Z',
+				status: 'passed',
+				occurrence_count_start: 89,
+				occurrence_count_end: 89,
+				duration_hours: 6
+			},
+			{
+				id: 'vr-10c',
+				incident_id: 'inc-10',
+				round_number: 3,
+				started_at: '2024-01-12T21:00:00Z',
+				completed_at: '2024-01-13T14:00:00Z',
+				status: 'passed',
+				occurrence_count_start: 89,
+				occurrence_count_end: 89,
+				duration_hours: 24
+			}
+		]
+	},
+	'inc-11': {
+		incident_id: 'inc-11',
+		status: 'verifying',
+		current_round: 1,
+		total_rounds: 3,
+		started_at: '2024-01-21T17:00:00Z',
+		rounds: [
+			{
+				id: 'vr-11a',
+				incident_id: 'inc-11',
+				round_number: 1,
+				started_at: '2024-01-21T17:00:00Z',
+				status: 'monitoring',
+				occurrence_count_start: 156,
+				duration_hours: 1
+			}
+		]
+	},
+	'inc-12': {
+		incident_id: 'inc-12',
+		status: 'not_started',
+		current_round: 0,
+		total_rounds: 3,
+		started_at: '2024-01-22T10:00:00Z',
+		rounds: []
+	}
+};
+
+// Get mock verification status for an incident
+export function getMockVerificationStatus(incidentId: string): VerificationSummary {
+	return mockVerificationRounds[incidentId] || {
+		incident_id: incidentId,
+		status: 'not_started',
+		current_round: 0,
+		total_rounds: 3,
+		rounds: []
+	};
+}
+
+// Get all incidents currently in verification (for the verification panel)
+export function getMockVerifyingIncidents(): Array<Incident & { verification: VerificationSummary }> {
+	const verifyingStatuses = ['verifying', 'pending_verification'];
+	return mockIncidents
+		.filter(i => verifyingStatuses.includes(i.status) || i.verification_status === 'verifying')
+		.map(incident => ({
+			...incident,
+			project: mockProjects.find(p => p.id === incident.project_id),
+			verification: getMockVerificationStatus(incident.id)
+		}));
 }
 
 // Usage details for charts

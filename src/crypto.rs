@@ -30,7 +30,7 @@ impl EncryptionKey {
             ));
         }
 
-        let key = Key::<Aes256Gcm>::from_slice(&decoded).clone();
+        let key = *Key::<Aes256Gcm>::from_slice(&decoded);
         Ok(Self { key })
     }
 

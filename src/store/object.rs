@@ -154,7 +154,7 @@ impl SampleStore {
                 .fetch_all(&self.db)
                 .await?;
 
-                Ok(samples.into_iter().filter_map(|s| s).collect())
+                Ok(samples.into_iter().flatten().collect())
             }
             StorageMode::ObjectStore { store, prefix } => {
                 let path =
@@ -190,7 +190,7 @@ pub async fn init(config: &StorageConfig, db: PgPool) -> Result<SampleStore> {
                 .ok_or_else(|| anyhow!("object_store config required when mode is object_store"))?;
 
             let store = build_object_store(obj_config).await?;
-            let prefix = format!("crispr/samples");
+            let prefix = "crispr/samples".to_string();
 
             tracing::info!(
                 provider = %obj_config.provider,

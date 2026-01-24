@@ -299,10 +299,10 @@ impl<'a> CrisprMdManager<'a> {
         md.push_str("     Examples: unusual build process, specific coding conventions, dependencies\n");
         md.push_str("     that shouldn't be modified, areas that need human review, etc. -->\n\n");
         if ctx.special_notes.is_empty() {
-            md.push_str("\n");
+            md.push('\n');
         } else {
             md.push_str(&ctx.special_notes);
-            md.push_str("\n");
+            md.push('\n');
         }
         md.push_str("\n---\n\n");
 
@@ -335,10 +335,10 @@ impl<'a> CrisprMdManager<'a> {
         md.push_str("<!-- What does this service do, conceptually?\n");
         md.push_str("     This helps CRISPR understand the purpose of the code when generating fixes. -->\n\n");
         if ctx.service_description.is_empty() {
-            md.push_str("\n");
+            md.push('\n');
         } else {
             md.push_str(&ctx.service_description);
-            md.push_str("\n");
+            md.push('\n');
         }
 
         md

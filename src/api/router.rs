@@ -7,7 +7,7 @@ use axum::{
 use rust_embed::RustEmbed;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use super::{auth, events, incidents, ingest, metrics, patterns, projects, rate_limit, settings, webhooks, AppState};
+use super::{auth, events, incidents, ingest, issue_trackers, metrics, patterns, projects, rate_limit, settings, webhooks, AppState};
 
 #[derive(RustEmbed)]
 #[folder = "ui/build"]
@@ -53,6 +53,14 @@ pub fn build(state: AppState) -> Router {
         .route("/api/v1/auth/slack/channels", get(auth::slack_channels))
         .route("/api/v1/auth/slack/channel", post(auth::slack_set_channel))
         .route("/api/v1/auth/slack/test", post(auth::slack_test))
+        // Jira auth endpoints
+        .route("/api/v1/auth/jira/status", get(issue_trackers::get_jira_status))
+        .route("/api/v1/auth/jira/token", post(issue_trackers::connect_jira_token))
+        .route("/api/v1/auth/jira", axum::routing::delete(issue_trackers::disconnect_jira))
+        // Linear auth endpoints
+        .route("/api/v1/auth/linear/status", get(issue_trackers::get_linear_status))
+        .route("/api/v1/auth/linear/token", post(issue_trackers::connect_linear_token))
+        .route("/api/v1/auth/linear", axum::routing::delete(issue_trackers::disconnect_linear))
         // Projects endpoints
         .route("/api/v1/projects", get(projects::list).post(projects::create))
         .route(
@@ -69,6 +77,20 @@ pub fn build(state: AppState) -> Router {
                 .post(projects::setup_webhook)
                 .delete(projects::delete_webhook),
         )
+        // Issue tracker endpoints
+        .route(
+            "/api/v1/projects/:id/issue-trackers",
+            get(issue_trackers::list_project_trackers),
+        )
+        .route(
+            "/api/v1/projects/:id/issue-trackers/:provider",
+            axum::routing::put(issue_trackers::upsert_project_tracker)
+                .delete(issue_trackers::delete_project_tracker),
+        )
+        .route(
+            "/api/v1/projects/:id/issue-trackers/webhook/test",
+            post(issue_trackers::test_webhook),
+        )
         // Incidents endpoints
         .route("/api/v1/incidents", get(incidents::list))
         .route("/api/v1/incidents/stats", get(incidents::stats))
@@ -84,6 +106,8 @@ pub fn build(state: AppState) -> Router {
         // Verification endpoints
         .route("/api/v1/incidents/:id/verification", get(incidents::get_verification))
         .route("/api/v1/incidents/:id/verify-now", post(incidents::verify_now))
+        // External issues endpoint
+        .route("/api/v1/incidents/:id/external-issues", get(issue_trackers::list_incident_external_issues))
         // Pattern matches for incidents
         .route("/api/v1/incidents/:id/pattern-matches", get(patterns::incident_matches))
         // Patterns endpoints

@@ -998,7 +998,7 @@ fn find_related_file_paths(existing_paths: &HashSet<String>) -> Vec<String> {
         for (dir, related_list) in &related_dirs {
             if path.contains(&format!("/{}/", dir)) || path.starts_with(&format!("{}/", dir)) {
                 // Extract the filename
-                if let Some(filename) = path.split('/').last() {
+                if let Some(filename) = path.split('/').next_back() {
                     // Try to find related files
                     for related_dir in related_list {
                         let new_path = path.replace(&format!("/{}/", dir), &format!("/{}/", related_dir));
@@ -1199,7 +1199,7 @@ fn resolve_js_import(import_path: &str, current_dir: &str) -> Option<String> {
     }
 
     // Try adding extensions
-    for ext in extensions {
+    if let Some(ext) = extensions.into_iter().next() {
         let with_ext = format!("{}.{}", resolved, ext);
         return Some(with_ext);
     }

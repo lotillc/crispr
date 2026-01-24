@@ -62,11 +62,11 @@ impl LlmProvider for OllamaProvider {
 
         // Ollama doesn't return token counts directly in all cases
         // We estimate based on response length if not provided
-        let input_tokens = response.prompt_eval_count.unwrap_or_else(|| {
+        let input_tokens = response.prompt_eval_count.unwrap_or({
             // Rough estimate: ~4 chars per token
             (prompt.len() / 4) as i32
         });
-        let output_tokens = response.eval_count.unwrap_or_else(|| {
+        let output_tokens = response.eval_count.unwrap_or({
             (response.response.len() / 4) as i32
         });
 

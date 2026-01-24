@@ -38,6 +38,11 @@ export interface Incident {
 	verification_round?: number;
 	verification_status?: 'verifying' | 'verified' | 'recurred';
 	verified_at?: string;
+	verification_duration_hours?: number;  // LLM-recommended monitoring duration
+	verification_started_at?: string;
+	verification_ends_at?: string;
+	recurrence_detected_at?: string;
+	recurrence_count?: number;  // New occurrences since fix was merged
 }
 
 export type IncidentStatus =
@@ -68,6 +73,9 @@ export interface TriageResult {
 	fix_approach?: string;
 	what_changed?: string;
 	expected_behavior?: string;
+	// Verification recommendation from LLM
+	recommended_verification_hours?: number;
+	verification_reasoning?: string;  // Why this duration was chosen
 }
 
 export interface Sample {
@@ -544,4 +552,153 @@ export async function setupProjectWebhook(projectId: string): Promise<SetupWebho
 
 export async function deleteProjectWebhook(projectId: string): Promise<{ deleted: boolean; webhook_id?: number; message?: string }> {
 	return request(`/api/v1/projects/${projectId}/webhook`, { method: 'DELETE' });
+}
+
+// Issue Trackers
+
+export type IssueTrackerProvider = 'github' | 'jira' | 'linear' | 'webhook';
+
+export interface IssueTrackerConfig {
+	id: string;
+	project_id: string;
+	provider: IssueTrackerProvider;
+	enabled: boolean;
+	// GitHub config
+	github_labels?: string[];
+	github_assignees?: string[];
+	// Jira config
+	jira_site_url?: string;
+	jira_project_key?: string;
+	jira_issue_type?: string;
+	// Linear config
+	linear_team_id?: string;
+	// Webhook config
+	webhook_url?: string;
+	webhook_events?: string[];
+	// Status mapping
+	status_mapping?: Record<string, string>;
+	created_at: string;
+}
+
+export interface UpsertIssueTrackerRequest {
+	provider: IssueTrackerProvider;
+	enabled?: boolean;
+	github_labels?: string[];
+	github_assignees?: string[];
+	jira_site_url?: string;
+	jira_project_key?: string;
+	jira_issue_type?: string;
+	jira_priority?: string;
+	status_mapping?: Record<string, string>;
+	webhook_url?: string;
+	webhook_headers?: Record<string, string>;
+	webhook_events?: string[];
+	linear_team_id?: string;
+	linear_project_id?: string;
+}
+
+export async function getProjectIssueTrackers(projectId: string): Promise<IssueTrackerConfig[]> {
+	return request(`/api/v1/projects/${projectId}/issue-trackers`);
+}
+
+export async function upsertProjectIssueTracker(
+	projectId: string,
+	provider: IssueTrackerProvider,
+	config: UpsertIssueTrackerRequest
+): Promise<IssueTrackerConfig> {
+	return request(`/api/v1/projects/${projectId}/issue-trackers/${provider}`, {
+		method: 'PUT',
+		body: JSON.stringify(config)
+	});
+}
+
+export async function deleteProjectIssueTracker(
+	projectId: string,
+	provider: IssueTrackerProvider
+): Promise<{ deleted: boolean }> {
+	return request(`/api/v1/projects/${projectId}/issue-trackers/${provider}`, {
+		method: 'DELETE'
+	});
+}
+
+export async function testWebhook(
+	projectId: string,
+	url: string,
+	headers?: Record<string, string>
+): Promise<{ success: boolean; status_code?: number; response_body?: string; error?: string }> {
+	return request(`/api/v1/projects/${projectId}/issue-trackers/webhook/test`, {
+		method: 'POST',
+		body: JSON.stringify({ url, headers })
+	});
+}
+
+// External Issues
+
+export interface ExternalIssue {
+	id: string;
+	incident_id: string;
+	provider: IssueTrackerProvider;
+	external_id?: string;
+	external_url?: string;
+	external_status?: string;
+	last_synced_at?: string;
+	sync_error?: string;
+	created_at: string;
+}
+
+export async function getIncidentExternalIssues(incidentId: string): Promise<ExternalIssue[]> {
+	return request(`/api/v1/incidents/${incidentId}/external-issues`);
+}
+
+// Jira Connection
+
+export interface JiraConnectionStatus {
+	connected: boolean;
+	site_url?: string;
+	connected_by?: string;
+	user_email?: string;
+}
+
+export async function getJiraStatus(): Promise<JiraConnectionStatus> {
+	return request('/api/v1/auth/jira/status');
+}
+
+export async function connectJira(
+	siteUrl: string,
+	email: string,
+	apiToken: string
+): Promise<{ connected: boolean; site_url: string; user_name: string; user_email?: string }> {
+	return request('/api/v1/auth/jira/token', {
+		method: 'POST',
+		body: JSON.stringify({ site_url: siteUrl, email, api_token: apiToken })
+	});
+}
+
+export async function disconnectJira(): Promise<{ deleted: boolean }> {
+	return request('/api/v1/auth/jira', { method: 'DELETE' });
+}
+
+// Linear Connection
+
+export interface LinearConnectionStatus {
+	connected: boolean;
+	connected_by?: string;
+	organization_name?: string;
+}
+
+export async function getLinearStatus(): Promise<LinearConnectionStatus> {
+	return request('/api/v1/auth/linear/status');
+}
+
+export async function connectLinear(
+	apiKey: string
+): Promise<{ connected: boolean; user_name: string; user_email: string }> {
+	return request('/api/v1/auth/linear/token', {
+		method: 'POST',
+		body: JSON.stringify({ api_key: apiKey })
+	});
+}
+
+export async function disconnectLinear(): Promise<{ deleted: boolean }> {
+	return request('/api/v1/auth/linear', { method: 'DELETE' });
 }

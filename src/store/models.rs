@@ -88,7 +88,7 @@ pub struct Incident {
     pub queued_at: Option<DateTime<Utc>>,
     /// Position in queue for repo lock
     pub queue_position: Option<i32>,
-    /// Current verification round (1, 2, or 3)
+    /// Current verification round
     pub verification_round: Option<i32>,
     /// Verification status: 'verifying' | 'verified' | 'recurred'
     pub verification_status: Option<String>,
@@ -96,6 +96,16 @@ pub struct Incident {
     pub verified_at: Option<DateTime<Utc>>,
     /// When the PR was merged
     pub pr_merged_at: Option<DateTime<Utc>>,
+    /// LLM-recommended verification monitoring duration in hours
+    pub verification_duration_hours: Option<i32>,
+    /// When verification monitoring started
+    pub verification_started_at: Option<DateTime<Utc>>,
+    /// When verification monitoring is expected to complete
+    pub verification_ends_at: Option<DateTime<Utc>>,
+    /// Count of new occurrences during verification (indicates recurrence)
+    pub recurrence_count: Option<i32>,
+    /// When recurrence was first detected
+    pub recurrence_detected_at: Option<DateTime<Utc>>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -304,6 +314,16 @@ pub struct IncidentResponse {
     pub verified_at: Option<DateTime<Utc>>,
     /// When PR was merged
     pub pr_merged_at: Option<DateTime<Utc>>,
+    /// LLM-recommended monitoring duration in hours
+    pub verification_duration_hours: Option<i32>,
+    /// When verification monitoring started
+    pub verification_started_at: Option<DateTime<Utc>>,
+    /// When verification monitoring is expected to complete
+    pub verification_ends_at: Option<DateTime<Utc>>,
+    /// Count of new occurrences during verification
+    pub recurrence_count: Option<i32>,
+    /// When recurrence was first detected
+    pub recurrence_detected_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -335,6 +355,11 @@ impl From<Incident> for IncidentResponse {
             verification_status: i.verification_status,
             verified_at: i.verified_at,
             pr_merged_at: i.pr_merged_at,
+            verification_duration_hours: i.verification_duration_hours,
+            verification_started_at: i.verification_started_at,
+            verification_ends_at: i.verification_ends_at,
+            recurrence_count: i.recurrence_count,
+            recurrence_detected_at: i.recurrence_detected_at,
             created_at: i.created_at.unwrap_or_else(Utc::now),
             updated_at: i.updated_at.unwrap_or_else(Utc::now),
         }

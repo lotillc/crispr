@@ -10,6 +10,7 @@ pub mod events;
 pub mod grpc;
 pub mod incidents;
 pub mod ingest;
+pub mod issue_trackers;
 pub mod metrics;
 pub mod patterns;
 pub mod projects;

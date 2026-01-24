@@ -47,7 +47,9 @@ pub async fn list(
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
                        tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                        queued_at, queue_position, verification_round, verification_status,
-                       verified_at, pr_merged_at,
+                       verified_at, pr_merged_at, verification_duration_hours,
+                       verification_started_at, verification_ends_at,
+                       recurrence_count, recurrence_detected_at,
                        created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1 AND state = $2
@@ -82,7 +84,9 @@ pub async fn list(
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
                        tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                        queued_at, queue_position, verification_round, verification_status,
-                       verified_at, pr_merged_at,
+                       verified_at, pr_merged_at, verification_duration_hours,
+                       verification_started_at, verification_ends_at,
+                       recurrence_count, recurrence_detected_at,
                        created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1
@@ -115,7 +119,9 @@ pub async fn list(
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
                        tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                        queued_at, queue_position, verification_round, verification_status,
-                       verified_at, pr_merged_at,
+                       verified_at, pr_merged_at, verification_duration_hours,
+                       verification_started_at, verification_ends_at,
+                       recurrence_count, recurrence_detected_at,
                        created_at, updated_at
                 FROM incidents
                 WHERE state = $1
@@ -148,7 +154,9 @@ pub async fn list(
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
                        tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                        queued_at, queue_position, verification_round, verification_status,
-                       verified_at, pr_merged_at,
+                       verified_at, pr_merged_at, verification_duration_hours,
+                       verification_started_at, verification_ends_at,
+                       recurrence_count, recurrence_detected_at,
                        created_at, updated_at
                 FROM incidents
                 ORDER BY last_seen DESC
@@ -211,7 +219,9 @@ pub async fn get(
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
                tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                queued_at, queue_position, verification_round, verification_status,
-               verified_at, pr_merged_at,
+               verified_at, pr_merged_at, verification_duration_hours,
+               verification_started_at, verification_ends_at,
+               recurrence_count, recurrence_detected_at,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -287,7 +297,9 @@ pub async fn retry(
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
                tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                queued_at, queue_position, verification_round, verification_status,
-               verified_at, pr_merged_at,
+               verified_at, pr_merged_at, verification_duration_hours,
+               verification_started_at, verification_ends_at,
+               recurrence_count, recurrence_detected_at,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -322,7 +334,9 @@ pub async fn retry(
                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
                   tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                   queued_at, queue_position, verification_round, verification_status,
-                  verified_at, pr_merged_at,
+                  verified_at, pr_merged_at, verification_duration_hours,
+                  verification_started_at, verification_ends_at,
+                  recurrence_count, recurrence_detected_at,
                   created_at, updated_at
         "#,
         id
@@ -359,7 +373,9 @@ pub async fn ignore(
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
                tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                queued_at, queue_position, verification_round, verification_status,
-               verified_at, pr_merged_at,
+               verified_at, pr_merged_at, verification_duration_hours,
+               verification_started_at, verification_ends_at,
+               recurrence_count, recurrence_detected_at,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -381,7 +397,9 @@ pub async fn ignore(
                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
                   tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
                   queued_at, queue_position, verification_round, verification_status,
-                  verified_at, pr_merged_at,
+                  verified_at, pr_merged_at, verification_duration_hours,
+                  verification_started_at, verification_ends_at,
+                  recurrence_count, recurrence_detected_at,
                   created_at, updated_at
         "#,
         id

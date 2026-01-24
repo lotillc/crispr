@@ -1,7 +1,9 @@
 <script lang="ts">
-	import { projects, incidents, stats, activeIncidents, pendingPRs, toasts } from '$lib/stores';
-	import type { Project, Incident } from '$lib/api';
+	import { projects, incidents, stats, activeIncidents, pendingPRs, toasts, demoMode } from '$lib/stores';
+	import type { Project, Incident, VerificationSummary } from '$lib/api';
 	import { validateRepoName } from '$lib/validation';
+	import { getMockVerifyingIncidents, getMockVerificationStatus } from '$lib/mockData';
+	import { get } from 'svelte/store';
 
 	let activeTab = $state<'patients' | 'services'>('patients');
 	let showAddService = $state(false);
@@ -59,6 +61,83 @@
 	let needsAttention = $derived(
 		$incidents.filter(i => i.status === 'unfixable' || i.status === 'max_attempts')
 	);
+
+	// Incidents actively in verification (exclude already verified - those are done)
+	let verifyingIncidents = $derived(
+		$incidents.filter(i =>
+			(i.status === 'verifying' || i.status === 'pending_verification') &&
+			i.verification_status !== 'verified'
+		).map(i => ({
+			...i,
+			verification: get(demoMode) ? getMockVerificationStatus(i.id) : undefined
+		}))
+	);
+
+	function formatDuration(hours: number): string {
+		if (hours < 24) return `${hours}h`;
+		const days = Math.floor(hours / 24);
+		if (days < 7) return `${days}d`;
+		const weeks = Math.floor(days / 7);
+		if (weeks < 4) return `${weeks}w`;
+		const months = Math.floor(days / 30);
+		return `${months}mo`;
+	}
+
+	function formatDurationLong(hours: number): string {
+		if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''}`;
+		const days = Math.floor(hours / 24);
+		if (days < 7) return `${days} day${days !== 1 ? 's' : ''}`;
+		const weeks = Math.floor(days / 7);
+		if (weeks < 4) return `${weeks} week${weeks !== 1 ? 's' : ''}`;
+		const months = Math.floor(days / 30);
+		return `${months} month${months !== 1 ? 's' : ''}`;
+	}
+
+	function getVerificationProgress(incident: Incident & { verification?: VerificationSummary }): {
+		percent: number;
+		label: string;
+		elapsed: string;
+		remaining: string;
+		total: string;
+	} {
+		// Use per-incident duration, fallback to 24h
+		const totalHours = incident.verification_duration_hours || 24;
+		const startedAt = incident.verification_started_at;
+
+		if (!startedAt || incident.status === 'pending_verification') {
+			return {
+				percent: 0,
+				label: 'Pending',
+				elapsed: '0h',
+				remaining: formatDurationLong(totalHours),
+				total: formatDuration(totalHours)
+			};
+		}
+
+		const started = new Date(startedAt);
+		const now = new Date();
+		const totalMs = totalHours * 60 * 60 * 1000;
+		const elapsedMs = Math.min(now.getTime() - started.getTime(), totalMs); // Cap at total
+		const elapsedHours = Math.min(elapsedMs / (1000 * 60 * 60), totalHours); // Cap at total
+		const remainingHours = Math.max(0, totalHours - elapsedHours);
+
+		const percent = Math.min(100, Math.round((elapsedHours / totalHours) * 100));
+
+		let label: string;
+		if (percent >= 100 || remainingHours <= 0) {
+			label = 'Complete';
+		} else {
+			label = `${formatDuration(Math.ceil(remainingHours))} left`;
+		}
+
+		return {
+			percent,
+			label,
+			elapsed: formatDurationLong(Math.floor(elapsedHours)),
+			remaining: remainingHours > 0 ? formatDurationLong(Math.ceil(remainingHours)) : 'Done',
+			total: formatDuration(totalHours)
+		};
+	}
 
 	function getStatusLabel(status: string): string {
 		switch (status) {
@@ -387,6 +466,71 @@
 						</button>
 					</div>
 				{/if}
+			</section>
+		{/if}
+
+		<!-- Verification Rounds Panel -->
+		{#if verifyingIncidents.length > 0}
+			<section class="verification-panel">
+				<div class="verification-header">
+					<div class="verification-title">
+						<svg viewBox="0 0 20 20" fill="currentColor" class="verification-icon">
+							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+						</svg>
+						<h3>Verification Rounds</h3>
+						<span class="verification-subtitle">Monitoring merged fixes for recurrence</span>
+					</div>
+					<span class="verification-count">{verifyingIncidents.length} in progress</span>
+				</div>
+				<div class="verification-grid">
+					{#each verifyingIncidents as incident (incident.id)}
+						{@const progress = getVerificationProgress(incident)}
+						<a href="/theatre/{incident.project_id}?incident={incident.id}" class="verification-card">
+							<div class="vcard-header">
+								<span class="vcard-repo">{getRepoName(incident)}</span>
+								<span class="vcard-status" class:pending={incident.status === 'pending_verification'}>
+									{progress.label}
+								</span>
+							</div>
+							<p class="vcard-message">{incident.message}</p>
+
+							<!-- Progress bar with duration -->
+							<div class="vcard-progress">
+								<div class="progress-header">
+									<span class="progress-elapsed">{progress.elapsed}</span>
+									<span class="progress-total">of {formatDurationLong(incident.verification_duration_hours || 24)}</span>
+								</div>
+								<div class="progress-bar">
+									<div class="progress-fill" style="width: {progress.percent}%"></div>
+								</div>
+								<div class="progress-footer">
+									{#if incident.recurrence_count && incident.recurrence_count > 0}
+										<span class="recurrence-alert">⚠ {incident.recurrence_count} recurrence{incident.recurrence_count !== 1 ? 's' : ''}</span>
+									{:else}
+										<span class="no-recurrence">✓ No recurrence</span>
+									{/if}
+								</div>
+							</div>
+
+							<!-- Expected behavior -->
+							{#if incident.triage_result?.expected_behavior}
+								<div class="vcard-expected">
+									<span class="expected-label">Expected:</span>
+									<span class="expected-text">{incident.triage_result.expected_behavior}</span>
+								</div>
+							{/if}
+
+							<div class="vcard-footer">
+								{#if incident.pr_url}
+									<a href={incident.pr_url} target="_blank" class="vcard-pr" onclick={(e) => e.stopPropagation()}>
+										PR #{incident.pr_number}
+									</a>
+								{/if}
+								<span class="vcard-time">Merged {formatTimeAgo(incident.pr_merged_at || incident.last_seen)}</span>
+							</div>
+						</a>
+					{/each}
+				</div>
 			</section>
 		{/if}
 	{/if}
@@ -1493,6 +1637,227 @@
 
 		.tab-btn {
 			white-space: nowrap;
+		}
+	}
+
+	/* Verification Rounds Panel */
+	.verification-panel {
+		margin-top: var(--space-xl);
+		padding: var(--space-lg);
+		background: linear-gradient(135deg, var(--scrubs-soft), var(--stable-soft));
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--scrubs);
+	}
+
+	.verification-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: var(--space-lg);
+	}
+
+	.verification-title {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.verification-icon {
+		width: 24px;
+		height: 24px;
+		color: var(--scrubs);
+	}
+
+	.verification-title h3 {
+		font-size: 1.125rem;
+		font-weight: 600;
+		color: var(--obsidian);
+		margin: 0;
+	}
+
+	.verification-subtitle {
+		font-size: 0.8125rem;
+		color: var(--slate);
+		margin-left: var(--space-sm);
+		padding-left: var(--space-sm);
+		border-left: 1px solid var(--silver);
+	}
+
+	.verification-count {
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--scrubs-dark);
+		background: var(--white);
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius-full);
+	}
+
+	.verification-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+		gap: var(--space-md);
+	}
+
+	.verification-card {
+		background: var(--white);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		border: 1px solid var(--silver);
+		text-decoration: none;
+		transition: all var(--transition-fast);
+	}
+
+	.verification-card:hover {
+		border-color: var(--scrubs);
+		box-shadow: var(--shadow-md);
+		transform: translateY(-2px);
+	}
+
+	.vcard-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: var(--space-sm);
+	}
+
+	.vcard-repo {
+		font-weight: 600;
+		color: var(--charcoal);
+	}
+
+	.vcard-status {
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--scrubs-dark);
+		background: var(--scrubs-soft);
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+	}
+
+	.vcard-status.pending {
+		color: var(--caution);
+		background: var(--caution-soft, #fff8e6);
+	}
+
+	.vcard-message {
+		font-size: 0.8125rem;
+		color: var(--graphite);
+		margin: 0 0 var(--space-md);
+		line-height: 1.4;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+	}
+
+	.vcard-progress {
+		margin-bottom: var(--space-md);
+	}
+
+	.progress-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		margin-bottom: var(--space-xs);
+		font-size: 0.75rem;
+	}
+
+	.progress-elapsed {
+		font-weight: 600;
+		color: var(--scrubs-dark);
+	}
+
+	.progress-total {
+		color: var(--slate);
+	}
+
+	.progress-bar {
+		height: 6px;
+		background: var(--paper);
+		border-radius: var(--radius-full);
+		overflow: hidden;
+		margin-bottom: var(--space-xs);
+	}
+
+	.progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, var(--scrubs), var(--stable));
+		border-radius: var(--radius-full);
+		transition: width 0.5s ease;
+	}
+
+	.progress-footer {
+		font-size: 0.6875rem;
+	}
+
+	.no-recurrence {
+		color: var(--scrubs);
+	}
+
+	.recurrence-alert {
+		color: var(--alert);
+		font-weight: 500;
+	}
+
+	.vcard-expected {
+		background: var(--paper);
+		border-radius: var(--radius-sm);
+		padding: var(--space-sm);
+		margin-bottom: var(--space-md);
+		font-size: 0.75rem;
+	}
+
+	.expected-label {
+		font-weight: 600;
+		color: var(--graphite);
+	}
+
+	.expected-text {
+		color: var(--slate);
+		display: block;
+		margin-top: 2px;
+	}
+
+	.vcard-footer {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.75rem;
+	}
+
+	.vcard-pr {
+		color: var(--scrubs);
+		font-weight: 500;
+		text-decoration: none;
+	}
+
+	.vcard-pr:hover {
+		text-decoration: underline;
+	}
+
+	.vcard-time {
+		color: var(--slate);
+	}
+
+	@media (max-width: 768px) {
+		.verification-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.verification-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: var(--space-sm);
+		}
+
+		.verification-title {
+			flex-wrap: wrap;
+		}
+
+		.verification-subtitle {
+			display: none;
 		}
 	}
 </style>

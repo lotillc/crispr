@@ -1,13 +1,15 @@
 //! Verification Rounds Module
 //!
 //! Implements post-deployment verification to ensure fixes don't regress.
-//! Uses a multi-round verification system:
-//! - Round 1: 1 hour monitoring
-//! - Round 2: 6 hours monitoring
-//! - Round 3: 24 hours monitoring
+//! Uses single-round verification with LLM-recommended duration per incident.
 //!
-//! If the error reoccurs during any round, the fix is marked as "recurred".
-//! If all rounds pass, the fix is marked as "verified".
+//! The LLM recommends a monitoring duration (24h to 30 days) based on:
+//! - Error pattern (transient vs persistent)
+//! - Impact severity
+//! - Whether it involves time-based behavior (billing cycles, cron jobs, etc.)
+//!
+//! If the error reoccurs during monitoring, the fix is marked as "recurred".
+//! If monitoring passes without recurrence, the fix is marked as "verified".
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -16,8 +18,8 @@ use sqlx::PgPool;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-/// Verification round durations in hours
-const ROUND_DURATIONS: [i32; 3] = [1, 6, 24];
+/// Default verification duration in hours (used if LLM doesn't recommend one)
+const DEFAULT_VERIFICATION_HOURS: i32 = 24;
 
 /// Status of a verification check
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,12 +59,15 @@ pub struct VerificationRound {
     pub duration_hours: i32,
 }
 
-/// Start verification rounds for an incident after PR merge
+/// Start verification for an incident after PR merge
+///
+/// Uses the LLM-recommended duration stored in verification_duration_hours,
+/// or falls back to DEFAULT_VERIFICATION_HOURS (24h) if not set.
 pub async fn start_verification(db: &PgPool, incident_id: Uuid) -> Result<VerificationRound> {
-    // Get current occurrence count
+    // Get current occurrence count and LLM-recommended duration
     let incident = sqlx::query!(
         r#"
-        SELECT occurrence_count, state, verification_status
+        SELECT occurrence_count, state, verification_status, verification_duration_hours
         FROM incidents
         WHERE id = $1
         "#,
@@ -78,9 +83,11 @@ pub async fn start_verification(db: &PgPool, incident_id: Uuid) -> Result<Verifi
 
     let occurrence_count = incident.occurrence_count.unwrap_or(0);
     let round_number = 1;
-    let duration = ROUND_DURATIONS[0];
+    // Use LLM-recommended duration or default to 24 hours
+    let duration = incident.verification_duration_hours.unwrap_or(DEFAULT_VERIFICATION_HOURS);
     let round_id = Uuid::new_v4();
     let now = Utc::now();
+    let ends_at = now + chrono::Duration::hours(duration as i64);
 
     let mut tx = db.begin().await?;
 
@@ -100,16 +107,20 @@ pub async fn start_verification(db: &PgPool, incident_id: Uuid) -> Result<Verifi
     .execute(&mut *tx)
     .await?;
 
-    // Update incident state
+    // Update incident state with verification timing
     sqlx::query!(
         r#"
         UPDATE incidents
         SET verification_status = 'verifying',
             verification_round = 1,
             state = 'verifying',
+            verification_started_at = $1,
+            verification_ends_at = $2,
             updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $3
         "#,
+        now,
+        ends_at,
         incident_id
     )
     .execute(&mut *tx)
@@ -119,10 +130,10 @@ pub async fn start_verification(db: &PgPool, incident_id: Uuid) -> Result<Verifi
 
     info!(
         incident_id = %incident_id,
-        round = round_number,
         duration_hours = duration,
+        ends_at = %ends_at,
         occurrence_count = occurrence_count,
-        "Started verification round 1"
+        "Started verification monitoring"
     );
 
     Ok(VerificationRound {
@@ -166,7 +177,7 @@ pub async fn check_verification(db: &PgPool, incident_id: Uuid) -> Result<Verifi
         return match incident.verification_status.as_deref() {
             Some("verified") => Ok(VerificationStatus::Verified {
                 completed_at: incident.verified_at.unwrap_or_else(Utc::now),
-                total_monitoring_hours: 31, // 1 + 6 + 24
+                total_monitoring_hours: 0, // Will be set from round data
             }),
             Some("recurred") => {
                 // Get the failed round info
@@ -306,11 +317,10 @@ pub async fn advance_verification(db: &PgPool, incident_id: Uuid) -> Result<bool
         return Ok(true);
     }
 
-    // Round passed - check if there are more rounds
-    let round_number = round.round_number;
+    // Verification passed - mark as verified
     let now = Utc::now();
 
-    // Mark current round as passed
+    // Mark the round as passed
     sqlx::query!(
         r#"
         UPDATE verification_rounds
@@ -326,58 +336,17 @@ pub async fn advance_verification(db: &PgPool, incident_id: Uuid) -> Result<bool
     .execute(&mut *tx)
     .await?;
 
-    info!(
-        incident_id = %incident_id,
-        round = round_number,
-        "Verification round passed"
-    );
-
-    if round_number >= ROUND_DURATIONS.len() as i32 {
-        // All rounds complete - mark as verified
-        sqlx::query!(
-            r#"
-            UPDATE incidents
-            SET verification_status = 'verified',
-                state = 'verified',
-                verified_at = $1,
-                updated_at = NOW()
-            WHERE id = $2
-            "#,
-            now,
-            incident_id
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-
-        info!(incident_id = %incident_id, "All verification rounds passed - fix verified");
-        return Ok(true);
-    }
-
-    // Start next round
-    let next_round = round_number + 1;
-    let next_duration = ROUND_DURATIONS[(next_round - 1) as usize];
-    let next_round_id = Uuid::new_v4();
-
+    // Mark incident as verified
     sqlx::query!(
         r#"
-        INSERT INTO verification_rounds (id, incident_id, round_number, started_at, status, occurrence_count_start, duration_hours)
-        VALUES ($1, $2, $3, $4, 'monitoring', $5, $6)
+        UPDATE incidents
+        SET verification_status = 'verified',
+            state = 'verified',
+            verified_at = $1,
+            updated_at = NOW()
+        WHERE id = $2
         "#,
-        next_round_id,
-        incident_id,
-        next_round,
         now,
-        current_count,
-        next_duration
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query!(
-        "UPDATE incidents SET verification_round = $1, updated_at = NOW() WHERE id = $2",
-        next_round,
         incident_id
     )
     .execute(&mut *tx)
@@ -387,12 +356,11 @@ pub async fn advance_verification(db: &PgPool, incident_id: Uuid) -> Result<bool
 
     info!(
         incident_id = %incident_id,
-        round = next_round,
-        duration_hours = next_duration,
-        "Started next verification round"
+        duration_hours = round.duration_hours,
+        "Verification passed - fix verified"
     );
 
-    Ok(false)
+    Ok(true)
 }
 
 /// Get all verification rounds for an incident
@@ -511,7 +479,7 @@ pub struct VerificationSummary {
 pub async fn get_verification_summary(db: &PgPool, incident_id: Uuid) -> Result<VerificationSummary> {
     let incident = sqlx::query!(
         r#"
-        SELECT verification_status, verification_round, verified_at
+        SELECT verification_status, verification_round, verified_at, verification_duration_hours
         FROM incidents
         WHERE id = $1
         "#,
@@ -527,7 +495,7 @@ pub async fn get_verification_summary(db: &PgPool, incident_id: Uuid) -> Result<
         incident_id,
         status: incident.verification_status.unwrap_or_else(|| "not_started".to_string()),
         current_round: incident.verification_round,
-        total_rounds: ROUND_DURATIONS.len() as i32,
+        total_rounds: 1, // Single-round verification with per-incident duration
         rounds,
         started_at,
         verified_at: incident.verified_at,
@@ -539,8 +507,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_round_durations() {
-        assert_eq!(ROUND_DURATIONS, [1, 6, 24]);
-        assert_eq!(ROUND_DURATIONS.iter().sum::<i32>(), 31);
+    fn test_default_verification_hours() {
+        assert_eq!(DEFAULT_VERIFICATION_HOURS, 24);
     }
 }
