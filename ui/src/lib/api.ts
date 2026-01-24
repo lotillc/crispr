@@ -27,8 +27,17 @@ export interface Incident {
 	fix_attempts: number;
 	pr_url?: string;
 	pr_number?: number;
+	pr_state?: string;
+	pr_merged_at?: string;
 	triage_result?: TriageResult;
 	project?: Project;
+	// Queue tracking
+	queued_at?: string;
+	queue_position?: number;
+	// Verification tracking
+	verification_round?: number;
+	verification_status?: 'verifying' | 'verified' | 'recurred';
+	verified_at?: string;
 }
 
 export type IncidentStatus =
@@ -37,9 +46,16 @@ export type IncidentStatus =
 	| 'unfixable'
 	| 'pending_fix'
 	| 'fixing'
+	| 'pr_opening'
 	| 'pr_open'
 	| 'pr_merged'
+	| 'pr_closed'
+	| 'verifying'
+	| 'verified'
+	| 'pending_verification'
 	| 'ignored'
+	| 'cooldown'
+	| 'fix_failed'
 	| 'max_attempts';
 
 export interface TriageResult {
@@ -438,4 +454,94 @@ export async function updateWebhookSettings(
 		method: 'PUT',
 		body: JSON.stringify(settings)
 	});
+}
+
+// Verification
+
+export interface VerificationRound {
+	id: string;
+	incident_id: string;
+	round_number: number;
+	started_at: string;
+	completed_at?: string;
+	status: 'monitoring' | 'passed' | 'failed';
+	occurrence_count_start: number;
+	occurrence_count_end?: number;
+	duration_hours: number;
+}
+
+export interface VerificationSummary {
+	incident_id: string;
+	status: 'not_started' | 'verifying' | 'verified' | 'recurred';
+	current_round?: number;
+	total_rounds: number;
+	rounds: VerificationRound[];
+	started_at?: string;
+	verified_at?: string;
+}
+
+export async function getVerificationStatus(incidentId: string): Promise<VerificationSummary> {
+	return request(`/api/v1/incidents/${incidentId}/verification`);
+}
+
+export async function startVerificationNow(incidentId: string): Promise<VerificationSummary> {
+	return request(`/api/v1/incidents/${incidentId}/verify-now`, { method: 'POST' });
+}
+
+// Surgical Queue
+
+export interface CurrentOperation {
+	lock_id: string;
+	incident_id: string;
+	incident_title?: string;
+	fingerprint: string;
+	worker_id: string;
+	acquired_at: string;
+	expires_at: string;
+}
+
+export interface QueuedIncident {
+	incident_id: string;
+	incident_title?: string;
+	fingerprint: string;
+	queue_position: number;
+	queued_at?: string;
+}
+
+export interface SurgicalQueue {
+	current_operation?: CurrentOperation;
+	waiting: QueuedIncident[];
+}
+
+export async function getProjectQueue(projectId: string): Promise<SurgicalQueue> {
+	return request(`/api/v1/projects/${projectId}/queue`);
+}
+
+// Webhook Management
+
+export interface WebhookStatus {
+	configured: boolean;
+	webhook_id?: number;
+	webhook_url?: string;
+	events: string[];
+	active: boolean;
+	error?: string;
+}
+
+export interface SetupWebhookResponse {
+	success: boolean;
+	webhook_id?: number;
+	message: string;
+}
+
+export async function getProjectWebhook(projectId: string): Promise<WebhookStatus> {
+	return request(`/api/v1/projects/${projectId}/webhook`);
+}
+
+export async function setupProjectWebhook(projectId: string): Promise<SetupWebhookResponse> {
+	return request(`/api/v1/projects/${projectId}/webhook`, { method: 'POST' });
+}
+
+export async function deleteProjectWebhook(projectId: string): Promise<{ deleted: boolean; webhook_id?: number; message?: string }> {
+	return request(`/api/v1/projects/${projectId}/webhook`, { method: 'DELETE' });
 }

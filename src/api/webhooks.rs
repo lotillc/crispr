@@ -529,9 +529,9 @@ fn sentry_event_to_ingest(
         .or_else(|| issue.as_ref().and_then(|i| extract_project_from_sentry_slug(i.project.slug.as_deref())));
 
     // Parse timestamp
-    let timestamp = event.timestamp.map(|ts| {
+    let timestamp = event.timestamp.and_then(|ts| {
         DateTime::<Utc>::from_timestamp(ts as i64, ((ts % 1.0) * 1_000_000_000.0) as u32)
-    }).flatten();
+    });
 
     // Build attributes from tags
     let mut attributes = serde_json::Map::new();
@@ -711,9 +711,9 @@ fn datadog_event_to_ingest(payload: &DatadogWebhookPayload) -> Result<Option<Ing
     let project = extract_project_from_datadog_tags(payload.tags.as_ref());
 
     // Parse timestamp
-    let timestamp = payload.date.map(|ts| {
+    let timestamp = payload.date.and_then(|ts| {
         DateTime::<Utc>::from_timestamp(ts, 0)
-    }).flatten();
+    });
 
     // Determine level
     let level = match payload.alert_type.as_deref() {
@@ -1182,6 +1182,210 @@ fn extract_project_from_grafana_labels(labels: Option<&serde_json::Value>) -> Op
         }
         None
     })
+}
+
+// ============================================================================
+// GitHub Webhook Handler
+// ============================================================================
+
+/// GitHub webhook payload for PR events
+#[derive(Debug, Deserialize)]
+pub struct GitHubPullRequestWebhook {
+    /// Action: opened, closed, merged, etc.
+    pub action: String,
+    /// The pull request object
+    pub pull_request: GitHubPullRequest,
+    /// Repository information
+    pub repository: GitHubRepository,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitHubPullRequest {
+    pub number: i32,
+    pub state: String,
+    pub merged: Option<bool>,
+    pub merged_at: Option<String>,
+    pub html_url: String,
+    pub title: String,
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitHubRepository {
+    pub full_name: String,
+    pub owner: GitHubOwner,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitHubOwner {
+    pub login: String,
+}
+
+/// POST /webhooks/github
+///
+/// Handles GitHub PR webhook events for verification tracking.
+/// On PR merge: starts verification rounds
+/// On PR close without merge: marks PR as closed
+pub async fn github_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<WebhookResponse>, AppError> {
+    // Verify GitHub signature if webhook secret is configured
+    if let Some(expected_secret) = &state.config.github.webhook_secret {
+        let signature = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| {
+                warn!("Missing GitHub webhook signature header");
+                AppError::Unauthorized("Missing webhook signature".into())
+            })?;
+
+        if !verify_github_signature(&body, signature, expected_secret) {
+            warn!("Invalid GitHub webhook signature");
+            return Err(AppError::Unauthorized("Invalid webhook signature".into()));
+        }
+    }
+
+    // Check event type
+    let event_type = headers
+        .get("x-github-event")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if event_type != "pull_request" {
+        return Ok(Json(WebhookResponse {
+            accepted: true,
+            message: format!("Ignored event type: {}", event_type),
+            incidents_created: 0,
+            incidents_updated: 0,
+        }));
+    }
+
+    // Parse payload
+    let payload: GitHubPullRequestWebhook = serde_json::from_slice(&body)
+        .map_err(|e| AppError::BadRequest(format!("Invalid JSON payload: {}", e)))?;
+
+    info!(
+        action = %payload.action,
+        pr_number = payload.pull_request.number,
+        repo = %payload.repository.full_name,
+        "Received GitHub PR webhook"
+    );
+
+    let mut incidents_updated = 0;
+
+    // Only handle closed PRs
+    if payload.action == "closed" {
+        // Find incident by PR number and repo
+        let incident = sqlx::query!(
+            r#"
+            SELECT i.id, i.pr_state
+            FROM incidents i
+            JOIN projects p ON p.id = i.project_id
+            WHERE i.pr_number = $1
+            AND p.github_owner = $2
+            AND p.github_repo = $3
+            "#,
+            payload.pull_request.number,
+            payload.repository.owner.login,
+            payload.repository.name
+        )
+        .fetch_optional(&state.db)
+        .await?;
+
+        if let Some(incident) = incident {
+            let was_merged = payload.pull_request.merged.unwrap_or(false);
+
+            if was_merged {
+                // PR was merged - start verification
+                let merged_at = payload.pull_request.merged_at
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(chrono::Utc::now);
+
+                if let Err(e) = crate::pipeline::handle_pr_merged(&state.db, incident.id, merged_at).await {
+                    warn!(error = %e, incident_id = %incident.id, "Failed to start verification after merge");
+                } else {
+                    info!(
+                        incident_id = %incident.id,
+                        pr_number = payload.pull_request.number,
+                        "Started verification after PR merge"
+                    );
+                    incidents_updated += 1;
+
+                    // Broadcast state change
+                    state.events.incident_updated(incident.id, "verifying", None, None);
+                    crate::api::events::broadcast_stats(&state).await;
+                }
+            } else {
+                // PR was closed without merge
+                if let Err(e) = crate::pipeline::handle_pr_closed(&state.db, incident.id).await {
+                    warn!(error = %e, incident_id = %incident.id, "Failed to handle PR close");
+                } else {
+                    info!(
+                        incident_id = %incident.id,
+                        pr_number = payload.pull_request.number,
+                        "PR closed without merge"
+                    );
+                    incidents_updated += 1;
+
+                    // Broadcast state change
+                    state.events.incident_updated(incident.id, "pr_closed", None, None);
+                    crate::api::events::broadcast_stats(&state).await;
+                }
+            }
+        } else {
+            info!(
+                pr_number = payload.pull_request.number,
+                repo = %payload.repository.full_name,
+                "No matching incident found for PR"
+            );
+        }
+    }
+
+    Ok(Json(WebhookResponse {
+        accepted: true,
+        message: format!("Processed GitHub webhook: {} incidents updated", incidents_updated),
+        incidents_created: 0,
+        incidents_updated,
+    }))
+}
+
+/// Verify GitHub webhook signature using HMAC-SHA256.
+fn verify_github_signature(body: &[u8], signature: &str, secret: &str) -> bool {
+    // GitHub sends signature as "sha256=<hex>"
+    let expected_prefix = "sha256=";
+    if !signature.starts_with(expected_prefix) {
+        warn!("Invalid signature format (expected sha256=...)");
+        return false;
+    }
+
+    let hex_signature = &signature[expected_prefix.len()..];
+
+    // Create HMAC-SHA256 instance
+    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+        Ok(mac) => mac,
+        Err(_) => {
+            warn!("Failed to create HMAC instance");
+            return false;
+        }
+    };
+
+    mac.update(body);
+
+    // Decode expected signature
+    let expected_bytes = match hex::decode(hex_signature) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            warn!("Failed to decode signature as hex");
+            return false;
+        }
+    };
+
+    mac.verify_slice(&expected_bytes).is_ok()
 }
 
 #[cfg(test)]

@@ -84,6 +84,18 @@ pub struct Incident {
     pub matched_pattern_id: Option<Uuid>,
     /// Whether this incident was auto-triaged via pattern matching
     pub pattern_auto_triaged: Option<bool>,
+    /// Timestamp when incident was queued for surgical lock
+    pub queued_at: Option<DateTime<Utc>>,
+    /// Position in queue for repo lock
+    pub queue_position: Option<i32>,
+    /// Current verification round (1, 2, or 3)
+    pub verification_round: Option<i32>,
+    /// Verification status: 'verifying' | 'verified' | 'recurred'
+    pub verification_status: Option<String>,
+    /// When verification completed successfully
+    pub verified_at: Option<DateTime<Utc>>,
+    /// When the PR was merged
+    pub pr_merged_at: Option<DateTime<Utc>>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -280,6 +292,18 @@ pub struct IncidentResponse {
     pub matched_pattern_id: Option<Uuid>,
     /// Whether this incident was auto-triaged via pattern matching
     pub pattern_auto_triaged: bool,
+    /// Queue position if waiting for surgical lock
+    pub queue_position: Option<i32>,
+    /// When queued for surgical lock
+    pub queued_at: Option<DateTime<Utc>>,
+    /// Current verification round
+    pub verification_round: Option<i32>,
+    /// Verification status
+    pub verification_status: Option<String>,
+    /// When verification completed
+    pub verified_at: Option<DateTime<Utc>>,
+    /// When PR was merged
+    pub pr_merged_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -305,6 +329,12 @@ impl From<Incident> for IncidentResponse {
             test_count: i.test_count.unwrap_or(0),
             matched_pattern_id: i.matched_pattern_id,
             pattern_auto_triaged: i.pattern_auto_triaged.unwrap_or(false),
+            queue_position: i.queue_position,
+            queued_at: i.queued_at,
+            verification_round: i.verification_round,
+            verification_status: i.verification_status,
+            verified_at: i.verified_at,
+            pr_merged_at: i.pr_merged_at,
             created_at: i.created_at.unwrap_or_else(Utc::now),
             updated_at: i.updated_at.unwrap_or_else(Utc::now),
         }
@@ -337,6 +367,67 @@ impl From<GeneratedTestRecord> for GeneratedTestResponse {
             included_in_pr: t.included_in_pr.unwrap_or(false),
             commit_sha: t.commit_sha,
             created_at: t.created_at.unwrap_or_else(Utc::now),
+        }
+    }
+}
+
+// Repo surgical lock for per-repo serialization
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct RepoSurgicalLock {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub incident_id: Uuid,
+    pub worker_id: String,
+    pub acquired_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+// Verification round record
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct VerificationRoundRecord {
+    pub id: Uuid,
+    pub incident_id: Uuid,
+    pub round_number: i32,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub status: String,
+    pub occurrence_count_start: i32,
+    pub occurrence_count_end: Option<i32>,
+    pub duration_hours: i32,
+}
+
+// Incident relations for tracking overlapping fixes
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct IncidentRelation {
+    pub id: Uuid,
+    pub incident_id: Uuid,
+    pub related_incident_id: Uuid,
+    pub relation_type: String,
+    pub confidence: Option<f32>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Response type for incident relations
+#[derive(Debug, Serialize)]
+pub struct IncidentRelationResponse {
+    pub id: Uuid,
+    pub incident_id: Uuid,
+    pub related_incident_id: Uuid,
+    pub relation_type: String,
+    pub confidence: Option<f32>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<IncidentRelation> for IncidentRelationResponse {
+    fn from(r: IncidentRelation) -> Self {
+        Self {
+            id: r.id,
+            incident_id: r.incident_id,
+            related_incident_id: r.related_incident_id,
+            relation_type: r.relation_type,
+            confidence: r.confidence,
+            created_at: r.created_at.unwrap_or_else(Utc::now),
         }
     }
 }

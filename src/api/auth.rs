@@ -4,7 +4,6 @@
 
 use axum::{
     extract::{Host, Query, State},
-    http::header,
     response::{IntoResponse, Redirect, Response},
     Json,
 };
@@ -152,7 +151,7 @@ pub async fn github_redirect(
 
     // GitHub OAuth URL with all required parameters
     let redirect_uri = format!(
-        "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=repo&state={}",
+        "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=repo,admin:repo_hook&state={}",
         client_id, encoded_callback, oauth_state
     );
 

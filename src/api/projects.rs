@@ -160,6 +160,60 @@ pub async fn create(
     .fetch_one(&state.db)
     .await?;
 
+    // Try to auto-setup GitHub webhook for PR events
+    if state.github.is_connected().await {
+        if let Some(public_url) = &state.config.server.public_url {
+            let webhook_url = format!("{}/webhooks/github", public_url);
+            let webhook_secret = state.config.github.webhook_secret.as_deref();
+
+            // Check if webhook already exists
+            match state.github.find_crispr_webhook(&req.github_owner, &req.github_repo, &webhook_url).await {
+                Ok(Some(_)) => {
+                    tracing::info!(
+                        owner = %req.github_owner,
+                        repo = %req.github_repo,
+                        "Webhook already exists for repo"
+                    );
+                }
+                Ok(None) => {
+                    // Create the webhook
+                    match state.github.create_webhook(
+                        &req.github_owner,
+                        &req.github_repo,
+                        &webhook_url,
+                        webhook_secret,
+                        vec!["pull_request"],
+                    ).await {
+                        Ok(hook) => {
+                            tracing::info!(
+                                owner = %req.github_owner,
+                                repo = %req.github_repo,
+                                hook_id = hook.id,
+                                "Auto-created GitHub webhook for PR events"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                owner = %req.github_owner,
+                                repo = %req.github_repo,
+                                "Failed to auto-create webhook (may lack admin:repo_hook scope)"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        owner = %req.github_owner,
+                        repo = %req.github_repo,
+                        "Failed to check existing webhooks"
+                    );
+                }
+            }
+        }
+    }
+
     Ok(Json(ProjectResponse::from(project)))
 }
 
@@ -199,7 +253,7 @@ pub async fn update(
     Json(req): Json<UpdateProjectRequest>,
 ) -> Result<Json<ProjectResponse>, AppError> {
     // Verify project exists
-    let existing = sqlx::query!("SELECT id FROM projects WHERE id = $1", id)
+    let _existing = sqlx::query!("SELECT id FROM projects WHERE id = $1", id)
         .fetch_optional(&state.db)
         .await?
         .ok_or_not_found("Project not found")?;
@@ -291,4 +345,217 @@ pub async fn stats(
         prs_opened: stats.prs_opened,
         prs_merged: stats.prs_merged,
     }))
+}
+
+// ============================================================================
+// Webhook Management
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct WebhookStatus {
+    pub configured: bool,
+    pub webhook_id: Option<i64>,
+    pub webhook_url: Option<String>,
+    pub events: Vec<String>,
+    pub active: bool,
+    pub error: Option<String>,
+}
+
+/// GET /api/v1/projects/:id/webhook - Get webhook status for a project
+pub async fn get_webhook(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<WebhookStatus>, AppError> {
+    let project = sqlx::query!(
+        "SELECT github_owner, github_repo FROM projects WHERE id = $1",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Project not found")?;
+
+    if !state.github.is_connected().await {
+        return Ok(Json(WebhookStatus {
+            configured: false,
+            webhook_id: None,
+            webhook_url: None,
+            events: vec![],
+            active: false,
+            error: Some("GitHub not connected".to_string()),
+        }));
+    }
+
+    let Some(public_url) = &state.config.server.public_url else {
+        return Ok(Json(WebhookStatus {
+            configured: false,
+            webhook_id: None,
+            webhook_url: None,
+            events: vec![],
+            active: false,
+            error: Some("Server public_url not configured".to_string()),
+        }));
+    };
+
+    let webhook_url = format!("{}/webhooks/github", public_url);
+
+    match state.github.find_crispr_webhook(&project.github_owner, &project.github_repo, &webhook_url).await {
+        Ok(Some(hook)) => Ok(Json(WebhookStatus {
+            configured: true,
+            webhook_id: Some(hook.id),
+            webhook_url: hook.config.url,
+            events: hook.events,
+            active: hook.active,
+            error: None,
+        })),
+        Ok(None) => Ok(Json(WebhookStatus {
+            configured: false,
+            webhook_id: None,
+            webhook_url: Some(webhook_url),
+            events: vec![],
+            active: false,
+            error: None,
+        })),
+        Err(e) => Ok(Json(WebhookStatus {
+            configured: false,
+            webhook_id: None,
+            webhook_url: Some(webhook_url),
+            events: vec![],
+            active: false,
+            error: Some(e.to_string()),
+        })),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetupWebhookResponse {
+    pub success: bool,
+    pub webhook_id: Option<i64>,
+    pub message: String,
+}
+
+/// POST /api/v1/projects/:id/webhook - Setup webhook for a project
+pub async fn setup_webhook(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<SetupWebhookResponse>, AppError> {
+    let project = sqlx::query!(
+        "SELECT github_owner, github_repo FROM projects WHERE id = $1",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Project not found")?;
+
+    if !state.github.is_connected().await {
+        return Err(AppError::BadRequest("GitHub not connected".to_string()));
+    }
+
+    let Some(public_url) = &state.config.server.public_url else {
+        return Err(AppError::BadRequest("Server public_url not configured".to_string()));
+    };
+
+    let webhook_url = format!("{}/webhooks/github", public_url);
+    let webhook_secret = state.config.github.webhook_secret.as_deref();
+
+    // Check if webhook already exists
+    if let Ok(Some(existing)) = state.github.find_crispr_webhook(
+        &project.github_owner,
+        &project.github_repo,
+        &webhook_url,
+    ).await {
+        return Ok(Json(SetupWebhookResponse {
+            success: true,
+            webhook_id: Some(existing.id),
+            message: "Webhook already exists".to_string(),
+        }));
+    }
+
+    // Create the webhook
+    match state.github.create_webhook(
+        &project.github_owner,
+        &project.github_repo,
+        &webhook_url,
+        webhook_secret,
+        vec!["pull_request"],
+    ).await {
+        Ok(hook) => {
+            tracing::info!(
+                owner = %project.github_owner,
+                repo = %project.github_repo,
+                hook_id = hook.id,
+                "Created GitHub webhook"
+            );
+            Ok(Json(SetupWebhookResponse {
+                success: true,
+                webhook_id: Some(hook.id),
+                message: "Webhook created successfully".to_string(),
+            }))
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                owner = %project.github_owner,
+                repo = %project.github_repo,
+                "Failed to create webhook"
+            );
+            Err(AppError::BadRequest(format!("Failed to create webhook: {}. Make sure you have admin:repo_hook permission.", e)))
+        }
+    }
+}
+
+/// DELETE /api/v1/projects/:id/webhook - Remove webhook for a project
+pub async fn delete_webhook(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let project = sqlx::query!(
+        "SELECT github_owner, github_repo FROM projects WHERE id = $1",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Project not found")?;
+
+    if !state.github.is_connected().await {
+        return Err(AppError::BadRequest("GitHub not connected".to_string()));
+    }
+
+    let Some(public_url) = &state.config.server.public_url else {
+        return Err(AppError::BadRequest("Server public_url not configured".to_string()));
+    };
+
+    let webhook_url = format!("{}/webhooks/github", public_url);
+
+    // Find the webhook
+    let webhook = state.github.find_crispr_webhook(
+        &project.github_owner,
+        &project.github_repo,
+        &webhook_url,
+    ).await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+
+    let Some(hook) = webhook else {
+        return Ok(Json(serde_json::json!({
+            "deleted": false,
+            "message": "No webhook found"
+        })));
+    };
+
+    // Delete it
+    state.github.delete_webhook(
+        &project.github_owner,
+        &project.github_repo,
+        hook.id,
+    ).await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+
+    tracing::info!(
+        owner = %project.github_owner,
+        repo = %project.github_repo,
+        hook_id = hook.id,
+        "Deleted GitHub webhook"
+    );
+
+    Ok(Json(serde_json::json!({
+        "deleted": true,
+        "webhook_id": hook.id
+    })))
 }

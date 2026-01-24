@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use super::AppState;
 use crate::error::{AppError, OptionExt};
+use crate::pipeline::{get_queue, get_verification_summary, start_verification, SurgicalQueue, VerificationSummary};
 use crate::store::models::{ActivityLog, GeneratedTestRecord, GeneratedTestResponse, Incident, IncidentResponse};
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +46,8 @@ pub async fn list(
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
                        tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                       queued_at, queue_position, verification_round, verification_status,
+                       verified_at, pr_merged_at,
                        created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1 AND state = $2
@@ -78,6 +81,8 @@ pub async fn list(
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
                        tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                       queued_at, queue_position, verification_round, verification_status,
+                       verified_at, pr_merged_at,
                        created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1
@@ -109,6 +114,8 @@ pub async fn list(
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
                        tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                       queued_at, queue_position, verification_round, verification_status,
+                       verified_at, pr_merged_at,
                        created_at, updated_at
                 FROM incidents
                 WHERE state = $1
@@ -140,6 +147,8 @@ pub async fn list(
                        occurrence_count, first_seen, last_seen, cooldown_until,
                        sample_location, fix_attempts, pr_url, pr_number, pr_state,
                        tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                       queued_at, queue_position, verification_round, verification_status,
+                       verified_at, pr_merged_at,
                        created_at, updated_at
                 FROM incidents
                 ORDER BY last_seen DESC
@@ -201,6 +210,8 @@ pub async fn get(
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
                tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+               queued_at, queue_position, verification_round, verification_status,
+               verified_at, pr_merged_at,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -275,6 +286,8 @@ pub async fn retry(
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
                tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+               queued_at, queue_position, verification_round, verification_status,
+               verified_at, pr_merged_at,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -308,6 +321,8 @@ pub async fn retry(
                   occurrence_count, first_seen, last_seen, cooldown_until,
                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
                   tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                  queued_at, queue_position, verification_round, verification_status,
+                  verified_at, pr_merged_at,
                   created_at, updated_at
         "#,
         id
@@ -343,6 +358,8 @@ pub async fn ignore(
                occurrence_count, first_seen, last_seen, cooldown_until,
                sample_location, fix_attempts, pr_url, pr_number, pr_state,
                tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+               queued_at, queue_position, verification_round, verification_status,
+               verified_at, pr_merged_at,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -363,6 +380,8 @@ pub async fn ignore(
                   occurrence_count, first_seen, last_seen, cooldown_until,
                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
                   tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
+                  queued_at, queue_position, verification_round, verification_status,
+                  verified_at, pr_merged_at,
                   created_at, updated_at
         "#,
         id
@@ -594,4 +613,98 @@ pub async fn get_test(
     .ok_or_not_found("Generated test not found")?;
 
     Ok(Json(GeneratedTestResponse::from(test)))
+}
+
+// ============================================================================
+// Verification API
+// ============================================================================
+
+/// GET /api/v1/incidents/:id/verification - Get verification status and rounds
+pub async fn get_verification(
+    State(state): State<AppState>,
+    Path(incident_id): Path<Uuid>,
+) -> Result<Json<VerificationSummary>, AppError> {
+    // Verify incident exists
+    let _incident = sqlx::query_scalar!(
+        "SELECT id FROM incidents WHERE id = $1",
+        incident_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Incident not found")?;
+
+    let summary = get_verification_summary(&state.db, incident_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    Ok(Json(summary))
+}
+
+/// POST /api/v1/incidents/:id/verify-now - Force start verification
+pub async fn verify_now(
+    State(state): State<AppState>,
+    Path(incident_id): Path<Uuid>,
+) -> Result<Json<VerificationSummary>, AppError> {
+    // Verify incident exists
+    let incident = sqlx::query!(
+        "SELECT id, pr_state, verification_status FROM incidents WHERE id = $1",
+        incident_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Incident not found")?;
+
+    // Check if already verifying
+    if incident.verification_status.as_deref() == Some("verifying") {
+        return Err(AppError::BadRequest("Incident is already in verification".to_string()));
+    }
+
+    // Start verification
+    start_verification(&state.db, incident_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Log the manual verification start
+    sqlx::query!(
+        r#"
+        INSERT INTO activity_log (id, incident_id, action, details)
+        VALUES ($1, $2, 'verification_started_manually', '{}'::jsonb)
+        "#,
+        Uuid::new_v4(),
+        incident_id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    // Return the updated summary
+    let summary = get_verification_summary(&state.db, incident_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    Ok(Json(summary))
+}
+
+// ============================================================================
+// Surgical Queue API
+// ============================================================================
+
+/// GET /api/v1/projects/:id/queue - Get surgical queue for a project
+pub async fn get_project_queue(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+) -> Result<Json<SurgicalQueue>, AppError> {
+    // Verify project exists
+    let _project = sqlx::query_scalar!(
+        "SELECT id FROM projects WHERE id = $1",
+        project_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found("Project not found")?;
+
+    let queue = get_queue(&state.db, project_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    Ok(Json(queue))
 }

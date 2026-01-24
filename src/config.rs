@@ -28,6 +28,9 @@ pub struct ServerConfig {
     pub host: String,
     pub http_port: u16,
     pub grpc_port: u16,
+    /// Public URL for webhooks (e.g., "https://crispr.example.com")
+    /// Required for auto-setting up GitHub webhooks
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +59,8 @@ pub struct GitHubConfig {
     pub personal_access_token: Option<String>,
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
+    /// Secret for verifying GitHub webhook signatures
+    pub webhook_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -185,13 +190,12 @@ pub fn load() -> Result<Config> {
 
 pub fn validate(config: &Config) -> Result<()> {
     // Dev environment must have safety rails
-    if config.environment == "development" {
-        if config.safety.allowed_repos.is_none() && !config.safety.dry_run {
+    if config.environment == "development"
+        && config.safety.allowed_repos.is_none() && !config.safety.dry_run {
             return Err(anyhow!(
                 "Development environment must set allowed_repos or dry_run=true"
             ));
         }
-    }
 
     // Validate GitHub config
     match config.github.mode.as_str() {
@@ -211,13 +215,12 @@ pub fn validate(config: &Config) -> Result<()> {
     }
 
     // Validate Slack config if enabled
-    if config.slack.enabled {
-        if config.slack.client_id.is_none() || config.slack.client_secret.is_none() {
+    if config.slack.enabled
+        && (config.slack.client_id.is_none() || config.slack.client_secret.is_none()) {
             return Err(anyhow!(
                 "Slack enabled but missing client_id or client_secret"
             ));
         }
-    }
 
     Ok(())
 }

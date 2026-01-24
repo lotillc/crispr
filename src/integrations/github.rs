@@ -208,6 +208,58 @@ impl GitHubClient {
         Ok(serde_json::from_value(response)?)
     }
 
+    /// Create a webhook for a repository
+    pub async fn create_webhook(
+        &self,
+        owner: &str,
+        repo: &str,
+        webhook_url: &str,
+        secret: Option<&str>,
+        events: Vec<&str>,
+    ) -> Result<GitHubWebhook> {
+        let mut config = serde_json::json!({
+            "url": webhook_url,
+            "content_type": "json",
+            "insecure_ssl": "0"
+        });
+
+        if let Some(s) = secret {
+            config["secret"] = serde_json::json!(s);
+        }
+
+        let response = self.post(
+            &format!("/repos/{}/{}/hooks", owner, repo),
+            &serde_json::json!({
+                "name": "web",
+                "active": true,
+                "events": events,
+                "config": config
+            })
+        ).await?;
+
+        Ok(serde_json::from_value(response)?)
+    }
+
+    /// List webhooks for a repository
+    pub async fn list_webhooks(&self, owner: &str, repo: &str) -> Result<Vec<GitHubWebhook>> {
+        let response = self.get(&format!("/repos/{}/{}/hooks", owner, repo)).await?;
+        Ok(serde_json::from_value(response)?)
+    }
+
+    /// Delete a webhook
+    pub async fn delete_webhook(&self, owner: &str, repo: &str, hook_id: i64) -> Result<()> {
+        self.delete(&format!("/repos/{}/{}/hooks/{}", owner, repo, hook_id)).await?;
+        Ok(())
+    }
+
+    /// Check if a CRISPR webhook already exists for a repo
+    pub async fn find_crispr_webhook(&self, owner: &str, repo: &str, webhook_url: &str) -> Result<Option<GitHubWebhook>> {
+        let webhooks = self.list_webhooks(owner, repo).await?;
+        Ok(webhooks.into_iter().find(|w| {
+            w.config.url.as_deref() == Some(webhook_url)
+        }))
+    }
+
     // HTTP helpers
 
     async fn get(&self, path: &str) -> Result<serde_json::Value> {
@@ -273,6 +325,27 @@ impl GitHubClient {
         }
 
         Ok(response.json().await?)
+    }
+
+    async fn delete(&self, path: &str) -> Result<()> {
+        let token = self.token.read().await;
+        let token = token.as_ref().ok_or_else(|| anyhow::anyhow!("GitHub not connected"))?;
+
+        let response = self.client
+            .delete(format!("{}{}", GITHUB_API_URL, path))
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("GitHub API error {}: {}", status, error_text));
+        }
+
+        Ok(())
     }
 }
 
@@ -401,4 +474,22 @@ pub struct CodeSearchItem {
     pub path: String,
     pub sha: String,
     pub html_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GitHubWebhook {
+    pub id: i64,
+    pub name: String,
+    pub active: bool,
+    pub events: Vec<String>,
+    pub config: WebhookConfig,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WebhookConfig {
+    pub url: Option<String>,
+    pub content_type: Option<String>,
+    pub insecure_ssl: Option<String>,
 }

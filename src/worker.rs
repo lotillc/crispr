@@ -17,7 +17,10 @@ use uuid::Uuid;
 
 use crate::api::metrics::{self, StageTimer};
 use crate::api::AppState;
-use crate::pipeline::{context, crispr_md::CrisprMdManager, fix, pr, repo::RepoManager, triage};
+use crate::pipeline::{
+    context, crispr_md::CrisprMdManager, fix, pr, repo::RepoManager, surgical, triage,
+    verification, DiffCheckResult, LockResult,
+};
 use crate::store::models::{Incident, Project};
 
 /// Worker instance that processes incidents
@@ -72,6 +75,12 @@ impl Worker {
         let claim_timeout = self.state.config.worker.claim_timeout_minutes;
         tokio::spawn(async move {
             cleanup_stale_claims_loop(&cleanup_state, claim_timeout).await;
+        });
+
+        // Start verification loop
+        let verification_state = self.state.clone();
+        tokio::spawn(async move {
+            verification_loop(&verification_state).await;
         });
 
         // Main processing loop
@@ -175,19 +184,27 @@ impl Worker {
         let mut tx = self.state.db.begin().await?;
 
         // Find an unclaimed incident ready for processing
+        // Exclude incidents where the repo has an active surgical lock
         let incident = sqlx::query_as!(
             Incident,
             r#"
-            SELECT id, project_id, fingerprint, title, state, severity,
-                   occurrence_count, first_seen, last_seen, cooldown_until,
-                   sample_location, fix_attempts, pr_url, pr_number, pr_state,
-                   tests_generated, test_count, matched_pattern_id, pattern_auto_triaged,
-                   created_at, updated_at
-            FROM incidents
-            WHERE state = 'detected'
-            AND (cooldown_until IS NULL OR cooldown_until < NOW())
-            AND (claimed_by IS NULL OR claimed_at < NOW() - INTERVAL '15 minutes')
-            ORDER BY last_seen DESC
+            SELECT i.id, i.project_id, i.fingerprint, i.title, i.state, i.severity,
+                   i.occurrence_count, i.first_seen, i.last_seen, i.cooldown_until,
+                   i.sample_location, i.fix_attempts, i.pr_url, i.pr_number, i.pr_state,
+                   i.tests_generated, i.test_count, i.matched_pattern_id, i.pattern_auto_triaged,
+                   i.queued_at, i.queue_position, i.verification_round, i.verification_status,
+                   i.verified_at, i.pr_merged_at,
+                   i.created_at, i.updated_at
+            FROM incidents i
+            WHERE i.state = 'detected'
+            AND (i.cooldown_until IS NULL OR i.cooldown_until < NOW())
+            AND (i.claimed_by IS NULL OR i.claimed_at < NOW() - INTERVAL '15 minutes')
+            AND NOT EXISTS (
+                SELECT 1 FROM repo_surgical_locks rsl
+                WHERE rsl.project_id = i.project_id
+                AND rsl.expires_at > NOW()
+            )
+            ORDER BY i.last_seen DESC
             LIMIT 1
             FOR UPDATE SKIP LOCKED
             "#
@@ -294,14 +311,83 @@ impl Worker {
             "Processing incident"
         );
 
-        // === ENSURE REPO IS CLONED ===
+        // === ACQUIRE SURGICAL LOCK ===
+        let surgical_lock = match surgical::acquire_lock(
+            &self.state.db,
+            project.id,
+            incident.id,
+            &self.worker_id,
+        )
+        .await?
+        {
+            LockResult::Acquired(lock) => {
+                info!(
+                    incident_id = %incident.id,
+                    lock_id = %lock.id,
+                    "Acquired surgical lock"
+                );
+                lock
+            }
+            LockResult::Blocked { holder_incident_id, queue_position } => {
+                info!(
+                    incident_id = %incident.id,
+                    holder = %holder_incident_id,
+                    queue_position = queue_position,
+                    "Repo is locked by another incident, queued"
+                );
+                log_activity(
+                    &self.state.db,
+                    incident.id,
+                    Some(project.id),
+                    "queued",
+                    &serde_json::json!({
+                        "holder_incident_id": holder_incident_id,
+                        "queue_position": queue_position,
+                    }),
+                )
+                .await?;
+                return Ok(());
+            }
+            LockResult::RetryAfterCleanup => {
+                debug!(incident_id = %incident.id, "Stale lock cleaned up, will retry");
+                return Ok(());
+            }
+        };
+
+        // From here on, we must release the lock when done
+        let result = self.process_incident_with_lock(incident, &project, &surgical_lock).await;
+
+        // Always release the surgical lock
+        if let Err(e) = surgical::release_lock(&self.state.db, surgical_lock.id).await {
+            error!(error = %e, lock_id = %surgical_lock.id, "Failed to release surgical lock");
+        }
+
+        result
+    }
+
+    /// Process an incident after acquiring the surgical lock
+    async fn process_incident_with_lock(
+        &self,
+        incident: &Incident,
+        project: &Project,
+        surgical_lock: &surgical::RepoSurgicalLock,
+    ) -> anyhow::Result<()> {
+        let default_branch = project.default_branch.as_deref().unwrap_or("main");
+
+        // === FRESH PULL BEFORE SURGERY ===
         info!(
             incident_id = %incident.id,
             repo = %format!("{}/{}", project.github_owner, project.github_repo),
-            "Ensuring repository is cloned"
+            "Performing fresh pull before surgery"
         );
-        self.repo_manager
-            .ensure_repo(&project.github_owner, &project.github_repo)?;
+        let new_head = surgical::fresh_pull_before_surgery(
+            &self.repo_manager,
+            &project.github_owner,
+            &project.github_repo,
+            default_branch,
+        )
+        .await?;
+        debug!(incident_id = %incident.id, head = %new_head, "Fresh pull complete");
 
         // === READ CRISPR.md CONTEXT ===
         let crispr_md = CrisprMdManager::new(&self.repo_manager);
@@ -453,6 +539,79 @@ impl Worker {
             "Triage complete, fixable"
         );
 
+        // === PRE-SURGERY DIFF CHECK ===
+        // Check if recent commits might have already fixed this issue
+        let reader = self
+            .state
+            .llm
+            .reader()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("LLM reader not configured"))?;
+
+        let diff_check_result = surgical::check_recent_diffs(
+            &self.state.db,
+            &reader,
+            &self.repo_manager,
+            project,
+            incident.id,
+            incident.title.as_deref().unwrap_or("Unknown error"),
+            &triage_result.suggested_files,
+        )
+        .await?;
+
+        match diff_check_result {
+            DiffCheckResult::SafeToProceed => {
+                debug!(incident_id = %incident.id, "Diff check passed, safe to proceed");
+            }
+            DiffCheckResult::PendingVerification { reason, relevant_commits } => {
+                info!(
+                    incident_id = %incident.id,
+                    reason = %reason,
+                    commits = ?relevant_commits,
+                    "Setting to pending_verification due to recent commits"
+                );
+                set_state(&self.state, incident.id, "pending_verification").await?;
+                log_activity(
+                    &self.state.db,
+                    incident.id,
+                    Some(project.id),
+                    "pending_verification",
+                    &serde_json::json!({
+                        "reason": reason,
+                        "relevant_commits": relevant_commits,
+                    }),
+                )
+                .await?;
+                // Start verification to see if the error stops occurring
+                verification::start_verification(&self.state.db, incident.id).await?;
+                return Ok(());
+            }
+            DiffCheckResult::OverlappingFix { related_incident_id, pr_url } => {
+                info!(
+                    incident_id = %incident.id,
+                    related_incident_id = %related_incident_id,
+                    pr_url = %pr_url,
+                    "Overlapping fix PR exists, setting to pending_verification"
+                );
+                set_state(&self.state, incident.id, "pending_verification").await?;
+                log_activity(
+                    &self.state.db,
+                    incident.id,
+                    Some(project.id),
+                    "overlapping_fix",
+                    &serde_json::json!({
+                        "related_incident_id": related_incident_id,
+                        "pr_url": pr_url,
+                    }),
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
+        // Extend the lock since we're about to do the heavy lifting
+        surgical::extend_lock(&self.state.db, surgical_lock.id).await?;
+
         // === CONTEXT GATHERING ===
         set_state(&self.state, incident.id, "fixing").await?;
         log_activity(
@@ -471,7 +630,7 @@ impl Worker {
         let context = context::gather_from_local(
             &reader,
             &self.repo_manager,
-            &project,
+            project,
             &triage_result,
             &sample,
             incident.id,
@@ -586,7 +745,7 @@ impl Worker {
             &self.state.github,
             &self.repo_manager,
             &writer,
-            &project,
+            project,
             incident,
             &generated_fix,
             &self.state.config.safety.pr_branch_prefix,
@@ -744,6 +903,66 @@ async fn cleanup_stale_claims_loop(state: &AppState, timeout_minutes: u32) {
         let _ = sqlx::query!("DELETE FROM oauth_states WHERE expires_at < NOW()")
             .execute(&state.db)
             .await;
+
+        // Cleanup expired surgical locks
+        if let Err(e) = surgical::cleanup_expired_locks(&state.db).await {
+            warn!(error = %e, "Failed to cleanup expired surgical locks");
+        }
+    }
+}
+
+/// Verification loop - checks and advances verification rounds
+async fn verification_loop(state: &AppState) {
+    let mut ticker = interval(Duration::from_secs(300)); // Check every 5 minutes
+
+    loop {
+        ticker.tick().await;
+
+        // Get all incidents in verification
+        let verifying = match verification::get_verifying_incidents(&state.db).await {
+            Ok(ids) => ids,
+            Err(e) => {
+                warn!(error = %e, "Failed to get verifying incidents");
+                continue;
+            }
+        };
+
+        for incident_id in verifying {
+            match verification::advance_verification(&state.db, incident_id).await {
+                Ok(complete) => {
+                    if complete {
+                        // Broadcast the state change
+                        let incident = sqlx::query!(
+                            "SELECT state, verification_status FROM incidents WHERE id = $1",
+                            incident_id
+                        )
+                        .fetch_optional(&state.db)
+                        .await;
+
+                        if let Ok(Some(i)) = incident {
+                            let new_state = i.state.as_deref().unwrap_or("verified");
+                            state.events.incident_updated(incident_id, new_state, None, None);
+                            crate::api::events::broadcast_stats(state).await;
+
+                            // Log verification completion
+                            let status = i.verification_status.as_deref().unwrap_or("unknown");
+                            info!(
+                                incident_id = %incident_id,
+                                status = status,
+                                "Verification completed"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        incident_id = %incident_id,
+                        "Failed to advance verification"
+                    );
+                }
+            }
+        }
     }
 }
 

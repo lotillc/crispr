@@ -1,7 +1,7 @@
 use axum::{extract::State, Json};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::metrics;
@@ -106,6 +106,11 @@ pub async fn http_ingest(
     )
     .fetch_one(&state.db)
     .await?;
+
+    // Auto-setup GitHub webhook for newly auto-registered projects
+    if project.auto_registered.unwrap_or(false) {
+        setup_webhook_for_project(&state, &owner, &repo).await;
+    }
 
     if !project.enabled.unwrap_or(true) {
         return Ok(Json(IngestResponse {
@@ -291,6 +296,64 @@ fn truncate_title(msg: &str) -> String {
         format!("{}...", &first_line[..197])
     } else {
         first_line.to_string()
+    }
+}
+
+/// Auto-setup GitHub webhook for a project (best effort, logs errors)
+async fn setup_webhook_for_project(state: &AppState, owner: &str, repo: &str) {
+    // Check if we can setup webhooks
+    if !state.github.is_connected().await {
+        return;
+    }
+
+    let Some(public_url) = &state.config.server.public_url else {
+        return;
+    };
+
+    let webhook_url = format!("{}/webhooks/github", public_url);
+    let webhook_secret = state.config.github.webhook_secret.as_deref();
+
+    // Check if webhook already exists (may have been setup previously)
+    match state.github.find_crispr_webhook(owner, repo, &webhook_url).await {
+        Ok(Some(_)) => {
+            // Already exists, nothing to do
+        }
+        Ok(None) => {
+            // Try to create it
+            match state.github.create_webhook(
+                owner,
+                repo,
+                &webhook_url,
+                webhook_secret,
+                vec!["pull_request"],
+            ).await {
+                Ok(hook) => {
+                    info!(
+                        owner,
+                        repo,
+                        hook_id = hook.id,
+                        "Auto-created GitHub webhook for auto-registered project"
+                    );
+                }
+                Err(e) => {
+                    // This is expected to fail if user doesn't have admin:repo_hook scope
+                    warn!(
+                        error = %e,
+                        owner,
+                        repo,
+                        "Failed to auto-create webhook (may lack admin:repo_hook scope)"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                owner,
+                repo,
+                "Failed to check existing webhooks"
+            );
+        }
     }
 }
 

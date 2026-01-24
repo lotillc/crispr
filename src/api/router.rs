@@ -1,7 +1,7 @@
 use axum::{
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post, put},
+    routing::{get, post},
     Router,
 };
 use rust_embed::RustEmbed;
@@ -33,6 +33,7 @@ pub fn build(state: AppState) -> Router {
         .route("/webhooks/sentry", post(webhooks::sentry_webhook))
         .route("/webhooks/datadog", post(webhooks::datadog_webhook))
         .route("/webhooks/grafana", post(webhooks::grafana_webhook))
+        .route("/webhooks/github", post(webhooks::github_webhook))
         .layer(rate_limit::RateLimitLayer::new(ingest_limiter))
         .with_state(state.clone());
 
@@ -61,6 +62,13 @@ pub fn build(state: AppState) -> Router {
                 .delete(projects::delete),
         )
         .route("/api/v1/projects/:id/stats", get(projects::stats))
+        .route("/api/v1/projects/:id/queue", get(incidents::get_project_queue))
+        .route(
+            "/api/v1/projects/:id/webhook",
+            get(projects::get_webhook)
+                .post(projects::setup_webhook)
+                .delete(projects::delete_webhook),
+        )
         // Incidents endpoints
         .route("/api/v1/incidents", get(incidents::list))
         .route("/api/v1/incidents/stats", get(incidents::stats))
@@ -73,6 +81,9 @@ pub fn build(state: AppState) -> Router {
             "/api/v1/incidents/:id/tests/:test_id",
             get(incidents::get_test).patch(incidents::update_test),
         )
+        // Verification endpoints
+        .route("/api/v1/incidents/:id/verification", get(incidents::get_verification))
+        .route("/api/v1/incidents/:id/verify-now", post(incidents::verify_now))
         // Pattern matches for incidents
         .route("/api/v1/incidents/:id/pattern-matches", get(patterns::incident_matches))
         // Patterns endpoints

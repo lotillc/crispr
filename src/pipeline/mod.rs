@@ -4,11 +4,16 @@ pub mod fingerprint;
 pub mod fix;
 pub mod pr;
 pub mod repo;
+pub mod surgical;
 pub mod triage;
+pub mod verification;
 
-pub use context::FixContext;
-pub use crispr_md::{CrisprContext, CrisprMdManager, FixRecord};
-pub use fix::{FileChange, GeneratedFix, GeneratedTest, derive_test_file_path};
-pub use pr::{PrResult, test_record_to_generated_test};
-pub use repo::RepoManager;
-pub use triage::TriageResult;
+pub use surgical::{
+    get_queue,
+    DiffCheckResult, LockResult, SurgicalQueue,
+};
+pub use verification::{
+    get_verification_summary, handle_pr_closed,
+    handle_pr_merged, start_verification,
+    VerificationSummary,
+};
