@@ -4,6 +4,8 @@
 
 A self-hosted production error monitoring system that automatically generates fixes and opens pull requests using LLMs.
 
+**[Live Demo](https://lotillc.github.io/crispr/)** — Try the UI in demo mode (no backend required)
+
 ---
 
 ## Incident Lifecycle
