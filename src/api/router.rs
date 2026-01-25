@@ -7,7 +7,7 @@ use axum::{
 use rust_embed::RustEmbed;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use super::{auth, events, incidents, ingest, issue_trackers, metrics, patterns, projects, rate_limit, settings, webhooks, AppState};
+use super::{auth, events, incidents, ingest, issue_trackers, metrics, patterns, projects, rate_limit, recommendations, settings, webhooks, AppState};
 
 #[derive(RustEmbed)]
 #[folder = "ui/build"]
@@ -140,6 +140,21 @@ pub fn build(state: AppState) -> Router {
             "/api/v1/settings/webhooks",
             get(settings::get_webhooks).put(settings::update_webhooks),
         )
+        // Recommendations endpoints
+        .route("/api/v1/recommendations", get(recommendations::list))
+        .route("/api/v1/recommendations/:id", get(recommendations::get))
+        .route("/api/v1/recommendations/:id/approve", post(recommendations::approve))
+        .route("/api/v1/recommendations/:id/reject", post(recommendations::reject))
+        .route("/api/v1/recommendations/:id/check-conflicts", post(recommendations::check_conflicts_endpoint))
+        .route("/api/v1/recommendations/:id/rebase", post(recommendations::rebase_endpoint))
+        .route("/api/v1/recommendations/:id/implement", post(recommendations::implement))
+        .route("/api/v1/recommendations/:id/comments", get(recommendations::list_comments).post(recommendations::add_comment))
+        .route("/api/v1/recommendations/:id/chat", get(recommendations::get_chat_history).post(recommendations::chat))
+        .route("/api/v1/recommendations/:id/apply-suggestion", post(recommendations::apply_suggestion))
+        .route("/api/v1/recommendations/:id/convert-to-incident", post(recommendations::convert_to_incident))
+        // Internist endpoints
+        .route("/api/v1/internist/analyze", post(recommendations::trigger_analysis))
+        .route("/api/v1/internist/runs", get(recommendations::list_analysis_runs))
         // Status endpoint
         .route("/api/v1/status", get(api_status))
         .with_state(state.clone());

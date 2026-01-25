@@ -286,4 +286,31 @@ impl RepoManager {
 
         Ok(())
     }
+
+    /// Get the current HEAD SHA
+    pub async fn get_head_sha(&self) -> Result<String> {
+        // Note: This is a placeholder - actual implementation would use the stored repo context
+        // For now we return a placeholder that would be replaced with actual git operations
+        Ok("HEAD".to_string())
+    }
+
+    /// Get files changed between two commits
+    pub async fn get_changed_files_since(&self, base_sha: &str, head_sha: &str) -> Result<Vec<String>> {
+        // Placeholder implementation
+        // In production, this would diff the two commits
+        Ok(vec![])
+    }
+
+    /// Count commits between two SHAs
+    pub async fn count_commits_between(&self, base_sha: &str, head_sha: &str) -> Result<i32> {
+        // Placeholder implementation
+        Ok(0)
+    }
+
+    /// Get file content at a specific commit
+    pub async fn get_file_at_commit(&self, file_path: &str, commit_sha: &str) -> Result<Option<String>> {
+        // Placeholder implementation
+        // In production, this would use git show to get file at specific commit
+        Ok(None)
+    }
 }

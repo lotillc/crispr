@@ -1,6 +1,6 @@
 import { writable, derived, get, type Readable } from 'svelte/store';
 import * as api from '$lib/api';
-import type { Project, Incident, AuthStatus, LlmConfig, UsageSummary, IncidentStats } from '$lib/api';
+import type { Project, Incident, AuthStatus, LlmConfig, UsageSummary, IncidentStats, Recommendation } from '$lib/api';
 import {
 	mockProjects,
 	mockIncidents,
@@ -8,6 +8,7 @@ import {
 	mockUsageSummary,
 	mockIncidentStats,
 	mockUsageDetails,
+	mockRecommendations,
 	getMockIncidentsWithProjects,
 	getMockIncidentDetails
 } from '$lib/mockData';
@@ -608,6 +609,94 @@ function createUsageStore() {
 	};
 }
 
+// Recommendations store (Internal Medicine)
+function createRecommendationsStore() {
+	const { subscribe, set, update } = writable<Recommendation[]>([]);
+	let loading = writable(false);
+	let analysisInProgress = writable(false);
+
+	return {
+		subscribe,
+		loading,
+		analysisInProgress,
+		async load() {
+			if (isDemoMode()) {
+				set(mockRecommendations);
+				return;
+			}
+			loading.set(true);
+			try {
+				const result = await api.getRecommendations();
+				set(Array.isArray(result.recommendations) ? result.recommendations : []);
+			} catch (e) {
+				console.error('Failed to load recommendations:', e);
+				set([]);
+			} finally {
+				loading.set(false);
+			}
+		},
+		async triggerAnalysis() {
+			if (isDemoMode()) {
+				// In demo mode, just simulate the analysis
+				return { run_id: 'demo-run', status: 'completed', message: 'Demo analysis complete' };
+			}
+			analysisInProgress.set(true);
+			try {
+				const result = await api.triggerInternistAnalysis();
+				// Reload recommendations after analysis
+				await this.load();
+				return result;
+			} finally {
+				analysisInProgress.set(false);
+			}
+		},
+		async approve(id: string, approvedBy: string) {
+			if (isDemoMode()) {
+				update(recs => recs.map(r =>
+					r.id === id ? { ...r, status: 'approved' as const, approved_by: approvedBy, approved_at: new Date().toISOString() } : r
+				));
+				return;
+			}
+			const updated = await api.approveRecommendation(id, approvedBy);
+			update(recs => recs.map(r => r.id === id ? updated : r));
+		},
+		async reject(id: string, rejectedBy: string, reason?: string) {
+			if (isDemoMode()) {
+				update(recs => recs.map(r =>
+					r.id === id ? { ...r, status: 'rejected' as const } : r
+				));
+				return;
+			}
+			const updated = await api.rejectRecommendation(id, rejectedBy, reason);
+			update(recs => recs.map(r => r.id === id ? updated : r));
+		},
+		async checkConflicts(id: string) {
+			if (isDemoMode()) {
+				return { has_conflicts: false, conflicting_files: [], base_commit: '', current_head: '', commits_behind: 0, can_auto_resolve: true, conflict_details: [] };
+			}
+			return api.checkRecommendationConflicts(id);
+		},
+		async rebase(id: string) {
+			if (isDemoMode()) {
+				return { success: true, resolved_files: [], remaining_conflicts: [], changes_applied: [], summary: 'Demo rebase complete' };
+			}
+			const result = await api.rebaseRecommendation(id);
+			await this.load();
+			return result;
+		},
+		async implement(id: string) {
+			if (isDemoMode()) {
+				update(recs => recs.map(r =>
+					r.id === id ? { ...r, status: 'implementing' as const } : r
+				));
+				return;
+			}
+			const updated = await api.implementRecommendation(id);
+			update(recs => recs.map(r => r.id === id ? updated : r));
+		}
+	};
+}
+
 // Export stores
 export const projects = createProjectsStore();
 export const incidents = createIncidentsStore();
@@ -615,6 +704,7 @@ export const stats = createStatsStore();
 export const auth = createAuthStore();
 export const llmConfig = createLlmConfigStore();
 export const usage = createUsageStore();
+export const recommendations = createRecommendationsStore();
 
 // Derived stores
 export const activeIncidents: Readable<Incident[]> = derived(
@@ -676,6 +766,7 @@ demoMode.subscribe((value) => {
 		stats.load();
 		auth.load();
 		usage.load();
+		recommendations.load();
 	}
 });
 

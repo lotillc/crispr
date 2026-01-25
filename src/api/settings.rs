@@ -21,6 +21,7 @@ pub struct LlmConfigResponse {
     pub configured: bool,
     pub reader: Option<LlmProviderInfo>,
     pub writer: Option<LlmProviderInfo>,
+    pub internist: Option<LlmProviderInfo>,
 }
 
 #[derive(Debug, Serialize)]
@@ -36,7 +37,8 @@ pub async fn get_llm(State(state): State<AppState>) -> Result<Json<LlmConfigResp
     let config = sqlx::query!(
         r#"
         SELECT reader_provider, reader_model, reader_api_key, reader_base_url,
-               writer_provider, writer_model, writer_api_key, writer_base_url
+               writer_provider, writer_model, writer_api_key, writer_base_url,
+               internist_provider, internist_model, internist_api_key, internist_base_url
         FROM llm_config
         ORDER BY created_at DESC
         LIMIT 1
@@ -60,11 +62,18 @@ pub async fn get_llm(State(state): State<AppState>) -> Result<Json<LlmConfigResp
                 has_api_key: c.writer_api_key.is_some(),
                 base_url: c.writer_base_url,
             }),
+            internist: c.internist_provider.map(|provider| LlmProviderInfo {
+                provider,
+                model: c.internist_model.unwrap_or_default(),
+                has_api_key: c.internist_api_key.is_some(),
+                base_url: c.internist_base_url,
+            }),
         })),
         None => Ok(Json(LlmConfigResponse {
             configured: false,
             reader: None,
             writer: None,
+            internist: None,
         })),
     }
 }
@@ -80,6 +89,11 @@ pub struct UpdateLlmRequest {
     pub writer_model: String,
     pub writer_api_key: Option<String>,
     pub writer_base_url: Option<String>,
+
+    pub internist_provider: Option<String>,
+    pub internist_model: Option<String>,
+    pub internist_api_key: Option<String>,
+    pub internist_base_url: Option<String>,
 }
 
 /// PUT /api/v1/settings/llm - Update LLM configuration
@@ -105,8 +119,12 @@ pub async fn update_llm(
                 writer_model = $6,
                 writer_api_key = COALESCE($7, writer_api_key),
                 writer_base_url = $8,
+                internist_provider = $9,
+                internist_model = $10,
+                internist_api_key = COALESCE($11, internist_api_key),
+                internist_base_url = $12,
                 updated_at = NOW()
-            WHERE id = $9
+            WHERE id = $13
             "#,
             req.reader_provider,
             req.reader_model,
@@ -116,6 +134,10 @@ pub async fn update_llm(
             req.writer_model,
             req.writer_api_key,
             req.writer_base_url,
+            req.internist_provider,
+            req.internist_model,
+            req.internist_api_key,
+            req.internist_base_url,
             row.id,
         )
         .execute(&state.db)
@@ -126,8 +148,9 @@ pub async fn update_llm(
             r#"
             INSERT INTO llm_config
             (id, reader_provider, reader_model, reader_api_key, reader_base_url,
-             writer_provider, writer_model, writer_api_key, writer_base_url)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             writer_provider, writer_model, writer_api_key, writer_base_url,
+             internist_provider, internist_model, internist_api_key, internist_base_url)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
             Uuid::new_v4(),
             req.reader_provider,
@@ -138,6 +161,10 @@ pub async fn update_llm(
             req.writer_model,
             req.writer_api_key,
             req.writer_base_url,
+            req.internist_provider,
+            req.internist_model,
+            req.internist_api_key,
+            req.internist_base_url,
         )
         .execute(&state.db)
         .await?;
@@ -201,151 +228,122 @@ pub async fn list_models(
 
 #[derive(Debug, Serialize)]
 pub struct UsageSummary {
-    pub period: String,
-    pub reader: UsageStats,
-    pub writer: UsageStats,
-    pub total: UsageStats,
-    pub by_project: Vec<ProjectUsage>,
-    pub by_day: Vec<DailyUsage>,
+    pub total_requests: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub total_cost: f64,
+    pub by_provider: std::collections::HashMap<String, ProviderUsage>,
+    pub by_purpose: std::collections::HashMap<String, PurposeUsage>,
 }
 
 #[derive(Debug, Serialize, Default)]
-pub struct UsageStats {
+pub struct ProviderUsage {
     pub requests: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
-    pub cost_usd: Decimal,
+    pub cost: f64,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ProjectUsage {
-    pub project_id: Uuid,
-    pub owner: String,
-    pub repo: String,
-    pub cost_usd: Decimal,
+#[derive(Debug, Serialize, Default)]
+pub struct PurposeUsage {
+    pub requests: i64,
+    pub cost: f64,
 }
 
-#[derive(Debug, Serialize)]
-pub struct DailyUsage {
-    pub date: NaiveDate,
-    pub reader_cost: Decimal,
-    pub writer_cost: Decimal,
-}
-
-/// GET /api/v1/usage/summary - Get usage summary for last 7 days
+/// GET /api/v1/usage/summary - Get usage summary
 pub async fn usage_summary(
     State(state): State<AppState>,
 ) -> Result<Json<UsageSummary>, AppError> {
-    let since = chrono::Utc::now() - chrono::Duration::days(7);
+    let since = chrono::Utc::now() - chrono::Duration::days(30);
 
-    // Reader stats
-    let reader = sqlx::query!(
+    // Total stats
+    let totals = sqlx::query!(
         r#"
         SELECT
             COUNT(*) as "requests!",
             COALESCE(SUM(input_tokens), 0) as "input_tokens!",
             COALESCE(SUM(output_tokens), 0) as "output_tokens!",
             COALESCE(SUM(cost_usd), 0) as "cost_usd!"
-        FROM llm_usage
-        WHERE role = 'reader' AND created_at > $1
-        "#,
-        since
-    )
-    .fetch_one(&state.db)
-    .await?;
-
-    // Writer stats
-    let writer = sqlx::query!(
-        r#"
-        SELECT
-            COUNT(*) as "requests!",
-            COALESCE(SUM(input_tokens), 0) as "input_tokens!",
-            COALESCE(SUM(output_tokens), 0) as "output_tokens!",
-            COALESCE(SUM(cost_usd), 0) as "cost_usd!"
-        FROM llm_usage
-        WHERE role = 'writer' AND created_at > $1
-        "#,
-        since
-    )
-    .fetch_one(&state.db)
-    .await?;
-
-    let total = UsageStats {
-        requests: reader.requests + writer.requests,
-        input_tokens: reader.input_tokens + writer.input_tokens,
-        output_tokens: reader.output_tokens + writer.output_tokens,
-        cost_usd: reader.cost_usd + writer.cost_usd,
-    };
-
-    // Usage by project
-    let by_project = sqlx::query!(
-        r#"
-        SELECT
-            p.id as "project_id!",
-            p.github_owner as "owner!",
-            p.github_repo as "repo!",
-            COALESCE(SUM(u.cost_usd), 0) as "cost_usd!"
-        FROM projects p
-        LEFT JOIN llm_usage u ON u.project_id = p.id AND u.created_at > $1
-        GROUP BY p.id, p.github_owner, p.github_repo
-        HAVING COALESCE(SUM(u.cost_usd), 0) > 0
-        ORDER BY "cost_usd!" DESC
-        LIMIT 10
-        "#,
-        since
-    )
-    .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .map(|r| ProjectUsage {
-        project_id: r.project_id,
-        owner: r.owner,
-        repo: r.repo,
-        cost_usd: r.cost_usd,
-    })
-    .collect();
-
-    // Usage by day
-    let by_day = sqlx::query!(
-        r#"
-        SELECT
-            DATE(created_at) as "date!",
-            COALESCE(SUM(CASE WHEN role = 'reader' THEN cost_usd ELSE 0 END), 0) as "reader_cost!",
-            COALESCE(SUM(CASE WHEN role = 'writer' THEN cost_usd ELSE 0 END), 0) as "writer_cost!"
         FROM llm_usage
         WHERE created_at > $1
-        GROUP BY DATE(created_at)
-        ORDER BY "date!" ASC
+        "#,
+        since
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    // Usage by provider
+    let provider_rows = sqlx::query!(
+        r#"
+        SELECT
+            provider,
+            COUNT(*) as "requests!",
+            COALESCE(SUM(input_tokens), 0) as "input_tokens!",
+            COALESCE(SUM(output_tokens), 0) as "output_tokens!",
+            COALESCE(SUM(cost_usd), 0) as "cost_usd!"
+        FROM llm_usage
+        WHERE created_at > $1
+        GROUP BY provider
         "#,
         since
     )
     .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .map(|r| DailyUsage {
-        date: r.date,
-        reader_cost: r.reader_cost,
-        writer_cost: r.writer_cost,
-    })
-    .collect();
+    .await?;
+
+    let mut by_provider = std::collections::HashMap::new();
+    for row in provider_rows {
+        by_provider.insert(
+            row.provider,
+            ProviderUsage {
+                requests: row.requests,
+                input_tokens: row.input_tokens,
+                output_tokens: row.output_tokens,
+                cost: row.cost_usd.to_string().parse().unwrap_or(0.0),
+            },
+        );
+    }
+
+    // Usage by purpose (role maps to purpose: reader->triage, writer->fix, internist->internist)
+    let purpose_rows = sqlx::query!(
+        r#"
+        SELECT
+            role,
+            COUNT(*) as "requests!",
+            COALESCE(SUM(cost_usd), 0) as "cost_usd!"
+        FROM llm_usage
+        WHERE created_at > $1
+        GROUP BY role
+        "#,
+        since
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut by_purpose = std::collections::HashMap::new();
+    for row in purpose_rows {
+        // Map role to purpose for frontend compatibility
+        let purpose = match row.role.as_str() {
+            "reader" => "triage",
+            "writer" => "fix",
+            "internist" => "internist",
+            other => other,
+        };
+        by_purpose.insert(
+            purpose.to_string(),
+            PurposeUsage {
+                requests: row.requests,
+                cost: row.cost_usd.to_string().parse().unwrap_or(0.0),
+            },
+        );
+    }
 
     Ok(Json(UsageSummary {
-        period: "last_7_days".into(),
-        reader: UsageStats {
-            requests: reader.requests,
-            input_tokens: reader.input_tokens,
-            output_tokens: reader.output_tokens,
-            cost_usd: reader.cost_usd,
-        },
-        writer: UsageStats {
-            requests: writer.requests,
-            input_tokens: writer.input_tokens,
-            output_tokens: writer.output_tokens,
-            cost_usd: writer.cost_usd,
-        },
-        total,
-        by_project,
-        by_day,
+        total_requests: totals.requests,
+        total_input_tokens: totals.input_tokens,
+        total_output_tokens: totals.output_tokens,
+        total_cost: totals.cost_usd.to_string().parse().unwrap_or(0.0),
+        by_provider,
+        by_purpose,
     }))
 }
 

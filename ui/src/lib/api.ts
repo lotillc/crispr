@@ -714,3 +714,247 @@ export async function connectLinear(
 export async function disconnectLinear(): Promise<{ deleted: boolean }> {
 	return request('/api/v1/auth/linear', { method: 'DELETE' });
 }
+
+// Recommendations (Internal Medicine)
+
+export type RecommendationStatus =
+	| 'analyzing'
+	| 'proposed'
+	| 'discussing'
+	| 'approved'
+	| 'implementing'
+	| 'completed'
+	| 'rejected';
+
+export type RecommendationCategory =
+	| 'api_contract'
+	| 'architecture'
+	| 'error_pattern'
+	| 'performance'
+	| 'security';
+
+export type RecommendationPriority = 'low' | 'medium' | 'high' | 'critical';
+
+export interface ProposedChange {
+	file_path?: string;
+	change_type: string;
+	description: string;
+	rationale: string;
+}
+
+export interface AnalysisDetails {
+	root_cause: string;
+	impact_assessment: string;
+	affected_components: string[];
+	patterns_identified: string[];
+}
+
+export interface Recommendation {
+	id: string;
+	status: RecommendationStatus;
+	title: string;
+	summary?: string;
+	analysis?: AnalysisDetails;
+	proposed_changes?: ProposedChange[];
+	priority: RecommendationPriority;
+	category?: RecommendationCategory;
+	confidence?: number;
+	source_incident_ids: string[];
+	pr_url?: string;
+	pr_number?: number;
+	pr_state?: string;
+	pr_branch?: string;
+	base_commit_sha?: string;
+	has_conflicts: boolean;
+	conflict_details?: any;
+	analyzed_at?: string;
+	proposed_at?: string;
+	approved_at?: string;
+	approved_by?: string;
+	completed_at?: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface RecommendationComment {
+	id: string;
+	recommendation_id: string;
+	author: string;
+	content: string;
+	created_at: string;
+}
+
+export interface InternistAnalysisRun {
+	id: string;
+	status: 'running' | 'completed' | 'failed';
+	incident_count: number;
+	recommendations_created: number;
+	started_at: string;
+	completed_at?: string;
+	error?: string;
+	input_tokens?: number;
+	output_tokens?: number;
+	cost_usd?: number;
+}
+
+export interface ConflictCheckResult {
+	has_conflicts: boolean;
+	conflicting_files: string[];
+	base_commit: string;
+	current_head: string;
+	commits_behind: number;
+	can_auto_resolve: boolean;
+	conflict_details: any[];
+}
+
+export interface RebaseResult {
+	success: boolean;
+	new_base_commit?: string;
+	resolved_files: string[];
+	remaining_conflicts: any[];
+	changes_applied: any[];
+	summary: string;
+}
+
+export async function getRecommendations(params?: {
+	status?: RecommendationStatus;
+	category?: RecommendationCategory;
+	limit?: number;
+	offset?: number;
+}): Promise<{ recommendations: Recommendation[]; total: number }> {
+	const query = new URLSearchParams();
+	if (params?.status) query.set('status', params.status);
+	if (params?.category) query.set('category', params.category);
+	if (params?.limit) query.set('limit', params.limit.toString());
+	if (params?.offset) query.set('offset', params.offset.toString());
+
+	const queryStr = query.toString();
+	return request(`/api/v1/recommendations${queryStr ? `?${queryStr}` : ''}`);
+}
+
+export async function getRecommendation(id: string): Promise<Recommendation> {
+	return request(`/api/v1/recommendations/${id}`);
+}
+
+export async function approveRecommendation(id: string, approvedBy: string): Promise<Recommendation> {
+	return request(`/api/v1/recommendations/${id}/approve`, {
+		method: 'POST',
+		body: JSON.stringify({ approved_by: approvedBy })
+	});
+}
+
+export async function rejectRecommendation(
+	id: string,
+	rejectedBy: string,
+	reason?: string
+): Promise<Recommendation> {
+	return request(`/api/v1/recommendations/${id}/reject`, {
+		method: 'POST',
+		body: JSON.stringify({ rejected_by: rejectedBy, reason })
+	});
+}
+
+export async function checkRecommendationConflicts(id: string): Promise<ConflictCheckResult> {
+	return request(`/api/v1/recommendations/${id}/check-conflicts`, { method: 'POST' });
+}
+
+export async function rebaseRecommendation(id: string): Promise<RebaseResult> {
+	return request(`/api/v1/recommendations/${id}/rebase`, { method: 'POST' });
+}
+
+export async function implementRecommendation(id: string): Promise<Recommendation> {
+	return request(`/api/v1/recommendations/${id}/implement`, { method: 'POST' });
+}
+
+export async function getRecommendationComments(id: string): Promise<RecommendationComment[]> {
+	return request(`/api/v1/recommendations/${id}/comments`);
+}
+
+export async function addRecommendationComment(
+	id: string,
+	author: string,
+	content: string
+): Promise<RecommendationComment> {
+	return request(`/api/v1/recommendations/${id}/comments`, {
+		method: 'POST',
+		body: JSON.stringify({ author, content })
+	});
+}
+
+export async function triggerInternistAnalysis(): Promise<{
+	run_id: string;
+	status: string;
+	message: string;
+}> {
+	return request('/api/v1/internist/analyze', { method: 'POST' });
+}
+
+export async function getInternistAnalysisRuns(limit?: number): Promise<InternistAnalysisRun[]> {
+	const query = limit ? `?limit=${limit}` : '';
+	return request(`/api/v1/internist/runs${query}`);
+}
+
+// Internist Chat
+
+export interface InternistChatMessage {
+	id: string;
+	role: 'user' | 'assistant';
+	content: string;
+	timestamp: string;
+	// If the assistant proposes changes, they'll be here
+	proposed_update?: {
+		title?: string;
+		summary?: string;
+		analysis?: AnalysisDetails;
+		proposed_changes?: ProposedChange[];
+		priority?: RecommendationPriority;
+	};
+}
+
+export interface InternistChatRequest {
+	message: string;
+	// Include context about what the user wants
+	intent?: 'discuss' | 'refine' | 'rewrite' | 'approve';
+}
+
+export interface InternistChatResponse {
+	message: InternistChatMessage;
+	// If the internist thinks the recommendation is ready for approval
+	ready_for_approval?: boolean;
+	// Suggested next actions
+	suggestions?: string[];
+}
+
+export async function sendInternistMessage(
+	recommendationId: string,
+	chatRequest: InternistChatRequest
+): Promise<InternistChatResponse> {
+	return request(`/api/v1/recommendations/${recommendationId}/chat`, {
+		method: 'POST',
+		body: JSON.stringify(chatRequest)
+	});
+}
+
+export async function getInternistChatHistory(
+	recommendationId: string
+): Promise<InternistChatMessage[]> {
+	return request(`/api/v1/recommendations/${recommendationId}/chat`);
+}
+
+export async function applyInternistSuggestion(
+	recommendationId: string,
+	messageId: string
+): Promise<Recommendation> {
+	return request(`/api/v1/recommendations/${recommendationId}/apply-suggestion`, {
+		method: 'POST',
+		body: JSON.stringify({ message_id: messageId })
+	});
+}
+
+export async function convertToTriageTicket(
+	recommendationId: string
+): Promise<{ incident_id: string; message: string }> {
+	return request(`/api/v1/recommendations/${recommendationId}/convert-to-incident`, {
+		method: 'POST'
+	});
+}

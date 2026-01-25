@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { base } from '$app/paths';
-	import { projects, incidents, stats, activeIncidents, pendingPRs, toasts, demoMode } from '$lib/stores';
-	import type { Project, Incident, VerificationSummary } from '$lib/api';
+	import { projects, incidents, stats, activeIncidents, pendingPRs, toasts, demoMode, recommendations } from '$lib/stores';
+	import type { Project, Incident, VerificationSummary, Recommendation } from '$lib/api';
 	import { validateRepoName } from '$lib/validation';
-	import { getMockVerifyingIncidents, getMockVerificationStatus } from '$lib/mockData';
+	import { getMockVerifyingIncidents, getMockVerificationStatus, getMockRecommendations } from '$lib/mockData';
 	import { get } from 'svelte/store';
 
 	let activeTab = $state<'patients' | 'services'>('patients');
@@ -18,6 +18,9 @@
 	// Loading states for toggle buttons
 	let togglingWatchLogs = $state<string | null>(null);
 	let togglingAutoFix = $state<string | null>(null);
+
+	// Internal Medicine state
+	let triggeringAnalysis = $state(false);
 
 	// Validation state for Add Service modal
 	let repoTouched = $state(false);
@@ -72,6 +75,11 @@
 			...i,
 			verification: get(demoMode) ? getMockVerificationStatus(i.id) : undefined
 		}))
+	);
+
+	// Internal Medicine recommendations
+	let currentRecommendations = $derived(
+		get(demoMode) ? getMockRecommendations() : $recommendations
 	);
 
 	function formatDuration(hours: number): string {
@@ -240,6 +248,47 @@
 	function toggleDischargedExpanded() {
 		dischargedExpanded = !dischargedExpanded;
 	}
+
+	async function triggerInternistAnalysis() {
+		if (get(demoMode)) {
+			toasts.info('Analysis triggered (demo mode)');
+			return;
+		}
+		triggeringAnalysis = true;
+		try {
+			await recommendations.triggerAnalysis();
+			toasts.success('Analysis started');
+		} catch (e) {
+			console.error('Failed to trigger analysis:', e);
+			toasts.error(`Failed to trigger analysis: ${(e as Error).message}`);
+		} finally {
+			triggeringAnalysis = false;
+		}
+	}
+
+	function getRecommendationCategoryLabel(category: string): string {
+		switch (category) {
+			case 'api_contract': return 'API Contract';
+			case 'architecture': return 'Architecture';
+			case 'error_pattern': return 'Error Pattern';
+			case 'performance': return 'Performance';
+			case 'security': return 'Security';
+			default: return category;
+		}
+	}
+
+	function getRecommendationStatusLabel(status: string): string {
+		switch (status) {
+			case 'analyzing': return 'Analyzing';
+			case 'proposed': return 'Proposed';
+			case 'discussing': return 'Discussing';
+			case 'approved': return 'Approved';
+			case 'implementing': return 'Implementing';
+			case 'completed': return 'Completed';
+			case 'rejected': return 'Rejected';
+			default: return status;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -319,7 +368,16 @@
 						<a href="{base}/theatre/{incident.project_id}?incident={incident.id}" class="patient-card">
 							<div class="patient-header">
 								<span class="patient-repo">{getRepoName(incident)}</span>
-								<span class="patient-status status-{incident.status}">{getStatusLabel(incident.status)}</span>
+								<div class="patient-badges">
+									{#if incident.has_api_contract_changes}
+										<span class="api-warning" title="Contains API contract changes">
+											<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+												<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+											</svg>
+										</span>
+									{/if}
+									<span class="patient-status status-{incident.status}">{getStatusLabel(incident.status)}</span>
+								</div>
 							</div>
 							<p class="patient-message">{incident.message}</p>
 							<div class="patient-footer">
@@ -528,6 +586,68 @@
 									</a>
 								{/if}
 								<span class="vcard-time">Merged {formatTimeAgo(incident.pr_merged_at || incident.last_seen)}</span>
+							</div>
+						</a>
+					{/each}
+				</div>
+			</section>
+		{/if}
+
+		<!-- Internal Medicine Panel -->
+		{#if currentRecommendations.length > 0}
+			<section class="internal-medicine-panel">
+				<div class="im-header">
+					<div class="im-title">
+						<svg viewBox="0 0 20 20" fill="currentColor" class="im-icon">
+							<path fill-rule="evenodd" d="M7 2a1 1 0 00-.707 1.707L7 4.414v3.758a1 1 0 01-.293.707l-4 4C.817 14.769 2.156 18 4.828 18h10.343c2.673 0 4.012-3.231 2.122-5.121l-4-4A1 1 0 0113 8.172V4.414l.707-.707A1 1 0 0013 2H7zm2 6.172V4h2v4.172a3 3 0 00.879 2.12l1.027 1.028a4 4 0 00-2.171.102l-.47.156a4 4 0 01-2.53 0l-.563-.187a1.993 1.993 0 00-.114-.035l1.063-1.063A3 3 0 009 8.172z" clip-rule="evenodd"/>
+						</svg>
+						<h3>Internal Medicine</h3>
+						<span class="im-subtitle">Architectural recommendations from pattern analysis</span>
+					</div>
+					<div class="im-actions">
+						<button
+							class="btn btn-secondary btn-sm"
+							onclick={triggerInternistAnalysis}
+							disabled={triggeringAnalysis}
+						>
+							{#if triggeringAnalysis}
+								<span class="btn-spinner"></span>
+								Analyzing...
+							{:else}
+								<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+									<path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+								</svg>
+								Run Analysis
+							{/if}
+						</button>
+						<span class="im-count">{currentRecommendations.length} proposals</span>
+					</div>
+				</div>
+				<div class="im-grid">
+					{#each currentRecommendations as rec (rec.id)}
+						<a href="{base}/recommendations/{rec.id}" class="im-card" class:has-conflicts={rec.has_conflicts}>
+							<div class="im-card-header">
+								<span class="im-category im-category-{rec.category}">{getRecommendationCategoryLabel(rec.category || 'unknown')}</span>
+								<span class="im-status im-status-{rec.status}">{getRecommendationStatusLabel(rec.status)}</span>
+							</div>
+							{#if rec.has_conflicts}
+								<div class="im-conflict-warning">
+									<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+										<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+									</svg>
+									<span>Has merge conflicts</span>
+								</div>
+							{/if}
+							<h4 class="im-card-title">{rec.title}</h4>
+							<p class="im-card-summary">{rec.summary}</p>
+							<div class="im-card-footer">
+								<span class="im-priority im-priority-{rec.priority}">{rec.priority}</span>
+								{#if rec.source_incident_ids}
+									<span class="im-incidents">{rec.source_incident_ids.length} incident{rec.source_incident_ids.length !== 1 ? 's' : ''}</span>
+								{/if}
+								{#if rec.confidence}
+									<span class="im-confidence">{Math.round(rec.confidence * 100)}% confidence</span>
+								{/if}
 							</div>
 						</a>
 					{/each}
@@ -1858,6 +1978,291 @@
 		}
 
 		.verification-subtitle {
+			display: none;
+		}
+	}
+
+	/* Patient badges container */
+	.patient-badges {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+	}
+
+	/* API Contract Warning Badge */
+	.api-warning {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--critical);
+		padding: 2px;
+		border-radius: var(--radius-sm);
+		background: var(--critical-soft);
+	}
+
+	/* Internal Medicine Panel */
+	.internal-medicine-panel {
+		margin-top: var(--space-xl);
+		padding: var(--space-lg);
+		background: linear-gradient(135deg, var(--vitals-soft), var(--paper));
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--vitals);
+	}
+
+	.im-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: var(--space-lg);
+		flex-wrap: wrap;
+		gap: var(--space-md);
+	}
+
+	.im-title {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.im-icon {
+		width: 24px;
+		height: 24px;
+		color: var(--vitals);
+	}
+
+	.im-title h3 {
+		font-size: 1.125rem;
+		font-weight: 600;
+		color: var(--obsidian);
+		margin: 0;
+	}
+
+	.im-subtitle {
+		font-size: 0.8125rem;
+		color: var(--slate);
+		margin-left: var(--space-sm);
+		padding-left: var(--space-sm);
+		border-left: 1px solid var(--silver);
+	}
+
+	.im-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+	}
+
+	.im-count {
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--vitals);
+		background: var(--white);
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius-full);
+	}
+
+	.im-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+		gap: var(--space-md);
+	}
+
+	.im-card {
+		background: var(--white);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		border: 1px solid var(--silver);
+		text-decoration: none;
+		color: inherit;
+		transition: all var(--transition-fast);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.im-card:hover {
+		border-color: var(--vitals);
+		box-shadow: var(--shadow-md);
+		transform: translateY(-2px);
+	}
+
+	.im-card.has-conflicts {
+		border-color: var(--caution);
+		background: linear-gradient(to bottom, var(--caution-soft), var(--white));
+	}
+
+	.im-card-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.im-category {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		background: var(--paper);
+		color: var(--graphite);
+	}
+
+	.im-category-api_contract {
+		background: var(--critical-soft);
+		color: #B91C1C;
+	}
+
+	.im-category-architecture {
+		background: var(--vitals-soft);
+		color: #1D4ED8;
+	}
+
+	.im-category-error_pattern {
+		background: var(--alert-soft);
+		color: #B45309;
+	}
+
+	.im-category-performance {
+		background: var(--scrubs-soft);
+		color: var(--scrubs-dark);
+	}
+
+	.im-category-security {
+		background: #FEE2E2;
+		color: #991B1B;
+	}
+
+	.im-status {
+		font-size: 0.6875rem;
+		font-weight: 500;
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		background: var(--paper);
+		color: var(--slate);
+	}
+
+	.im-status-analyzing {
+		background: var(--vitals-soft);
+		color: #1D4ED8;
+	}
+
+	.im-status-proposed {
+		background: var(--alert-soft);
+		color: #B45309;
+	}
+
+	.im-status-discussing {
+		background: var(--caution-soft);
+		color: var(--caution);
+	}
+
+	.im-status-approved {
+		background: var(--scrubs-soft);
+		color: var(--scrubs-dark);
+	}
+
+	.im-status-implementing {
+		background: var(--scrubs-soft);
+		color: var(--scrubs-dark);
+		animation: pulse 2s infinite;
+	}
+
+	.im-status-completed {
+		background: var(--stable-soft);
+		color: var(--stable-dark);
+	}
+
+	.im-status-rejected {
+		background: var(--critical-soft);
+		color: #B91C1C;
+	}
+
+	.im-conflict-warning {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		padding: var(--space-xs) var(--space-sm);
+		background: var(--caution-soft);
+		border-radius: var(--radius-sm);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		color: var(--caution);
+	}
+
+	.im-card-title {
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: var(--obsidian);
+		margin: 0;
+		line-height: 1.4;
+	}
+
+	.im-card-summary {
+		font-size: 0.8125rem;
+		color: var(--graphite);
+		margin: 0;
+		line-height: 1.5;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+	}
+
+	.im-card-footer {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		font-size: 0.75rem;
+		color: var(--slate);
+		margin-top: auto;
+	}
+
+	.im-priority {
+		font-weight: 600;
+		text-transform: capitalize;
+	}
+
+	.im-priority-critical {
+		color: #B91C1C;
+	}
+
+	.im-priority-high {
+		color: #B45309;
+	}
+
+	.im-priority-medium {
+		color: var(--graphite);
+	}
+
+	.im-priority-low {
+		color: var(--slate);
+	}
+
+	.im-incidents {
+		color: var(--graphite);
+	}
+
+	.im-confidence {
+		color: var(--scrubs-dark);
+	}
+
+	@media (max-width: 768px) {
+		.im-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.im-header {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
+		.im-title {
+			flex-wrap: wrap;
+		}
+
+		.im-subtitle {
 			display: none;
 		}
 	}

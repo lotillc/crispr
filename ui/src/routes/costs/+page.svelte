@@ -69,13 +69,14 @@
 		return costs.sort((a, b) => b.cost - a.cost);
 	});
 
-	// Compute cost by purpose (reader vs writer)
+	// Compute cost by purpose (reader vs writer vs internist)
 	let costByPurpose = $derived(() => {
 		const byPurpose = $usage?.by_purpose ?? {};
 		return Object.entries(byPurpose).map(([purpose, data]) => ({
 			purpose: purpose === 'triage' ? 'Log Analysis (Reader)' :
 				purpose === 'fix' ? 'Fix Generation (Writer)' :
-					purpose === 'context' ? 'Context Gathering' : purpose,
+					purpose === 'context' ? 'Context Gathering' :
+						purpose === 'internist' ? 'Pattern Analysis (Internist)' : purpose,
 			cost: data.cost,
 			requests: data.requests,
 		})).sort((a, b) => b.cost - a.cost);

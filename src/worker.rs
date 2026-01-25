@@ -19,8 +19,8 @@ use crate::api::metrics::{self, StageTimer};
 use crate::api::AppState;
 use crate::integrations::issue_trackers::{self, IncidentStateChange};
 use crate::pipeline::{
-    context, crispr_md::CrisprMdManager, fix, pr, repo::RepoManager, surgical, triage,
-    verification, DiffCheckResult, LockResult,
+    api_contracts, context, crispr_md::CrisprMdManager, fix, internist, pr, repo::RepoManager,
+    surgical, triage, verification, DiffCheckResult, LockResult,
 };
 use crate::store::models::{Incident, Project};
 
@@ -82,6 +82,12 @@ impl Worker {
         let verification_state = self.state.clone();
         tokio::spawn(async move {
             verification_loop(&verification_state).await;
+        });
+
+        // Start internist analysis loop (runs hourly)
+        let internist_state = self.state.clone();
+        tokio::spawn(async move {
+            internist_analysis_loop(&internist_state).await;
         });
 
         // Main processing loop
@@ -197,6 +203,7 @@ impl Worker {
                    i.verified_at, i.pr_merged_at, i.verification_duration_hours,
                    i.verification_started_at, i.verification_ends_at,
                    i.recurrence_count, i.recurrence_detected_at,
+                   i.has_api_contract_changes, i.api_contract_change_details,
                    i.created_at, i.updated_at
             FROM incidents i
             WHERE i.state = 'detected'
@@ -790,6 +797,53 @@ impl Worker {
             );
         }
 
+        // === API CONTRACT DETECTION ===
+        // Check if any modified files are API contracts
+        let changed_files: Vec<String> = generated_fix.affected_files().iter().map(|s| s.to_string()).collect();
+        let api_contract_changes = api_contracts::filter_api_contract_files(&changed_files);
+
+        if !api_contract_changes.is_empty() {
+            info!(
+                incident_id = %incident.id,
+                api_files = ?api_contract_changes.iter().map(|(f, _)| f).collect::<Vec<_>>(),
+                "Fix modifies API contract files"
+            );
+
+            // Analyze for breaking changes if reader LLM is available
+            let mut breaking_change_details = serde_json::json!({
+                "files": api_contract_changes.iter().map(|(f, t)| {
+                    serde_json::json!({
+                        "path": f,
+                        "type": t.as_str()
+                    })
+                }).collect::<Vec<_>>()
+            });
+
+            // Mark incident as having API contract changes
+            sqlx::query!(
+                r#"
+                UPDATE incidents
+                SET has_api_contract_changes = true,
+                    api_contract_change_details = $1,
+                    updated_at = NOW()
+                WHERE id = $2
+                "#,
+                breaking_change_details,
+                incident.id
+            )
+            .execute(&self.state.db)
+            .await?;
+
+            log_activity(
+                &self.state.db,
+                incident.id,
+                Some(project.id),
+                "api_contract_change_detected",
+                &breaking_change_details,
+            )
+            .await?;
+        }
+
         // === PR CREATION ===
         set_state(&self.state, incident.id, "pr_opening").await?;
         log_activity(
@@ -1054,6 +1108,13 @@ async fn verification_loop(state: &AppState) {
                             if let Err(e) = issue_trackers::sync_incident_state(&state.db, &state.github, &event).await {
                                 warn!(error = %e, incident_id = %incident_id, "Failed to sync verification to issue trackers");
                             }
+
+                            // Trigger internist analysis after successful verification
+                            if status == "verified" {
+                                if let Err(e) = trigger_post_verification_internist(state, incident_id).await {
+                                    warn!(error = %e, incident_id = %incident_id, "Failed to trigger post-verification internist analysis");
+                                }
+                            }
                         }
                     }
                 }
@@ -1067,6 +1128,100 @@ async fn verification_loop(state: &AppState) {
             }
         }
     }
+}
+
+/// Trigger internist analysis after an incident is verified
+async fn trigger_post_verification_internist(state: &AppState, just_verified_id: Uuid) -> anyhow::Result<()> {
+    // Check if internist is configured
+    if !state.llm.is_internist_configured().await {
+        return Ok(()); // Silently skip if not configured
+    }
+
+    let internist = match state.llm.internist().await {
+        Some(i) => i,
+        None => return Ok(()),
+    };
+
+    // Gather recent incidents including the just-verified one
+    let incidents = internist::gather_recent_verified_incidents(&state.db, just_verified_id, 48).await?;
+
+    // Need at least 3 incidents for meaningful pattern analysis
+    if incidents.len() < 3 {
+        debug!(
+            incident_id = %just_verified_id,
+            count = incidents.len(),
+            "Not enough recent incidents for post-verification internist analysis"
+        );
+        return Ok(());
+    }
+
+    info!(
+        just_verified_id = %just_verified_id,
+        incident_count = incidents.len(),
+        "Running post-verification internist analysis"
+    );
+
+    // Create an analysis run record
+    let run_id = Uuid::new_v4();
+    sqlx::query!(
+        "INSERT INTO internist_analysis_runs (id, status, incident_count) VALUES ($1, 'running', $2)",
+        run_id,
+        incidents.len() as i32
+    )
+    .execute(&state.db)
+    .await?;
+
+    // Run analysis
+    match internist::analyze_patterns(&internist, &incidents, "").await {
+        Ok(analysis) => {
+            let rec_count = analysis.recommendations.len();
+
+            if rec_count > 0 {
+                // Create recommendations
+                if let Err(e) = internist::create_recommendations(&state.db, &analysis, run_id).await {
+                    warn!(error = %e, "Failed to create recommendations from post-verification analysis");
+                }
+
+                info!(
+                    run_id = %run_id,
+                    recommendations = rec_count,
+                    patterns = analysis.patterns_found.len(),
+                    "Post-verification internist analysis created recommendations"
+                );
+            } else {
+                info!(
+                    run_id = %run_id,
+                    summary = %analysis.summary,
+                    "Post-verification internist analysis: no recommendations needed"
+                );
+            }
+
+            // Mark run as completed
+            sqlx::query!(
+                r#"
+                UPDATE internist_analysis_runs
+                SET status = 'completed', completed_at = NOW(), recommendations_created = $1
+                WHERE id = $2
+                "#,
+                rec_count as i32,
+                run_id
+            )
+            .execute(&state.db)
+            .await?;
+        }
+        Err(e) => {
+            warn!(error = %e, "Post-verification internist analysis failed");
+            sqlx::query!(
+                "UPDATE internist_analysis_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2",
+                e.to_string(),
+                run_id
+            )
+            .execute(&state.db)
+            .await?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Legacy run function for backwards compatibility
@@ -1152,6 +1307,123 @@ async fn log_activity(
     .await?;
 
     Ok(())
+}
+
+/// Internist analysis loop - runs pattern analysis across incidents
+async fn internist_analysis_loop(state: &AppState) {
+    // Run every hour (3600 seconds)
+    let mut ticker = interval(Duration::from_secs(3600));
+
+    // Skip the first tick to avoid running immediately on startup
+    ticker.tick().await;
+
+    loop {
+        ticker.tick().await;
+
+        // Check if internist is configured
+        if !state.llm.is_internist_configured().await {
+            debug!("Internist LLM not configured, skipping analysis");
+            continue;
+        }
+
+        info!("Starting scheduled internist analysis");
+
+        // Create analysis run record
+        let run_id = Uuid::new_v4();
+        if let Err(e) = sqlx::query!(
+            "INSERT INTO internist_analysis_runs (id, status) VALUES ($1, 'running')",
+            run_id
+        )
+        .execute(&state.db)
+        .await
+        {
+            warn!(error = %e, "Failed to create internist analysis run record");
+            continue;
+        }
+
+        // Gather incident summaries
+        let incidents = match internist::gather_incident_summaries(&state.db, 10, 100).await {
+            Ok(i) => i,
+            Err(e) => {
+                warn!(error = %e, "Failed to gather incident summaries");
+                let _ = sqlx::query!(
+                    "UPDATE internist_analysis_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2",
+                    e.to_string(),
+                    run_id
+                )
+                .execute(&state.db)
+                .await;
+                continue;
+            }
+        };
+
+        if incidents.is_empty() {
+            info!("Not enough incidents for internist analysis");
+            let _ = sqlx::query!(
+                "UPDATE internist_analysis_runs SET status = 'completed', incident_count = 0, completed_at = NOW() WHERE id = $1",
+                run_id
+            )
+            .execute(&state.db)
+            .await;
+            continue;
+        }
+
+        // Get internist LLM
+        let internist_llm = match state.llm.internist().await {
+            Some(llm) => llm,
+            None => {
+                warn!("Internist LLM not available");
+                continue;
+            }
+        };
+
+        // Run analysis
+        let analysis = match internist::analyze_patterns(&internist_llm, &incidents, "").await {
+            Ok(a) => a,
+            Err(e) => {
+                warn!(error = %e, "Internist analysis failed");
+                let _ = sqlx::query!(
+                    "UPDATE internist_analysis_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2",
+                    e.to_string(),
+                    run_id
+                )
+                .execute(&state.db)
+                .await;
+                continue;
+            }
+        };
+
+        // Create recommendations
+        match internist::create_recommendations(&state.db, &analysis, run_id).await {
+            Ok(created_ids) => {
+                let _ = sqlx::query!(
+                    "UPDATE internist_analysis_runs SET status = 'completed', incident_count = $1, recommendations_created = $2, completed_at = NOW() WHERE id = $3",
+                    incidents.len() as i32,
+                    created_ids.len() as i32,
+                    run_id
+                )
+                .execute(&state.db)
+                .await;
+
+                info!(
+                    run_id = %run_id,
+                    incidents = incidents.len(),
+                    recommendations = created_ids.len(),
+                    "Internist analysis completed successfully"
+                );
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to create recommendations");
+                let _ = sqlx::query!(
+                    "UPDATE internist_analysis_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2",
+                    e.to_string(),
+                    run_id
+                )
+                .execute(&state.db)
+                .await;
+            }
+        }
+    }
 }
 
 /// Sync incident state change to external issue trackers

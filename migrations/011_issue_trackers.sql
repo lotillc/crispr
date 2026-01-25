@@ -41,8 +41,8 @@ CREATE TABLE IF NOT EXISTS project_issue_trackers (
     UNIQUE(project_id, provider)
 );
 
-CREATE INDEX idx_project_issue_trackers_project ON project_issue_trackers(project_id);
-CREATE INDEX idx_project_issue_trackers_provider ON project_issue_trackers(provider) WHERE enabled = true;
+CREATE INDEX IF NOT EXISTS idx_project_issue_trackers_project ON project_issue_trackers(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_issue_trackers_provider ON project_issue_trackers(provider) WHERE enabled = true;
 
 -- Track external issues linked to incidents
 CREATE TABLE IF NOT EXISTS incident_external_issues (
@@ -68,8 +68,8 @@ CREATE TABLE IF NOT EXISTS incident_external_issues (
     UNIQUE(incident_id, provider)
 );
 
-CREATE INDEX idx_incident_external_issues_incident ON incident_external_issues(incident_id);
-CREATE INDEX idx_incident_external_issues_external ON incident_external_issues(provider, external_id);
+CREATE INDEX IF NOT EXISTS idx_incident_external_issues_incident ON incident_external_issues(incident_id);
+CREATE INDEX IF NOT EXISTS idx_incident_external_issues_external ON incident_external_issues(provider, external_id);
 
 -- Jira OAuth credentials (stored separately for security)
 CREATE TABLE IF NOT EXISTS jira_connections (

@@ -1,5 +1,5 @@
 // Mock data for demo mode
-import type { Project, Incident, AuthStatus, UsageSummary, IncidentStats, GeneratedTest, VerificationRound, VerificationSummary } from './api';
+import type { Project, Incident, AuthStatus, UsageSummary, IncidentStats, GeneratedTest, VerificationRound, VerificationSummary, Recommendation } from './api';
 
 export const mockProjects: Project[] = [
 	{
@@ -394,6 +394,10 @@ export const mockUsageSummary: UsageSummary = {
 		fix: {
 			requests: 188,
 			cost: 35.28
+		},
+		internist: {
+			requests: 24,
+			cost: 12.45
 		}
 	}
 };
@@ -1031,6 +1035,193 @@ export const mockUsageDetails = [
 	{ date: '2024-01-22', provider: 'anthropic', model: 'claude-3-haiku', purpose: 'triage', requests: 67, input_tokens: 134000, output_tokens: 18000, cost: 1.34 },
 	{ date: '2024-01-22', provider: 'anthropic', model: 'claude-sonnet-4', purpose: 'fix', requests: 14, input_tokens: 182000, output_tokens: 48000, cost: 4.85 },
 ];
+
+// Mock recommendations for Internal Medicine
+export const mockRecommendations: Recommendation[] = [
+	{
+		id: 'rec-1',
+		status: 'proposed',
+		title: 'Add centralized error boundary for API calls',
+		summary: 'Multiple incidents show uncaught promise rejections in API handlers. A centralized error boundary would catch these consistently and prevent cascading failures.',
+		priority: 'high',
+		category: 'architecture',
+		confidence: 0.87,
+		source_incident_ids: ['inc-1', 'inc-2', 'inc-8'],
+		has_conflicts: false,
+		created_at: '2024-01-20T10:00:00Z',
+		updated_at: '2024-01-22T14:00:00Z',
+		analysis: {
+			patterns_identified: [
+				'Repeated TypeError patterns in API response handling',
+				'Missing null checks before JSON parsing',
+				'Inconsistent error response formats'
+			],
+			root_cause: 'No unified error handling strategy across API endpoints',
+			impact_assessment: 'High - affects 3 services with 1,100+ combined occurrences',
+			affected_components: ['src/handlers', 'src/api', 'src/middleware']
+		},
+		proposed_changes: [
+			{
+				file_path: 'src/middleware/errorBoundary.ts',
+				change_type: 'create',
+				description: 'New centralized error boundary middleware',
+				rationale: 'Centralizing error handling reduces duplication and ensures consistent error responses'
+			},
+			{
+				file_path: 'src/api/client.ts',
+				change_type: 'modify',
+				description: 'Wrap all API calls with error boundary',
+				rationale: 'Prevents uncaught promise rejections from crashing the application'
+			}
+		]
+	},
+	{
+		id: 'rec-2',
+		status: 'discussing',
+		title: 'Implement connection pool health monitoring',
+		summary: 'Database connection timeouts correlate with traffic spikes. Adding proactive health checks and circuit breakers would prevent cascading failures.',
+		priority: 'critical',
+		category: 'performance',
+		confidence: 0.92,
+		source_incident_ids: ['inc-5', 'inc-11'],
+		has_conflicts: true,
+		conflict_details: [
+			{
+				file_path: 'src/db/pool.ts',
+				conflict_type: 'content_conflict',
+				description: 'Pool configuration was refactored in main branch'
+			}
+		],
+		created_at: '2024-01-18T08:00:00Z',
+		updated_at: '2024-01-22T09:00:00Z',
+		analysis: {
+			patterns_identified: [
+				'Connection timeout errors spike during peak hours',
+				'Pool exhaustion follows predictable traffic patterns',
+				'No graceful degradation when pool is exhausted'
+			],
+			root_cause: 'Fixed pool size without adaptive scaling or health checks',
+			impact_assessment: 'Critical - causes service outages during peak load',
+			affected_components: ['src/db', 'src/services']
+		},
+		proposed_changes: [
+			{
+				file_path: 'src/db/pool.ts',
+				change_type: 'modify',
+				description: 'Add health check interval and circuit breaker',
+				rationale: 'Proactive health checks prevent connections from timing out unexpectedly'
+			},
+			{
+				file_path: 'src/db/metrics.ts',
+				change_type: 'create',
+				description: 'Pool utilization metrics exporter',
+				rationale: 'Visibility into pool state enables alerting before exhaustion'
+			}
+		]
+	},
+	{
+		id: 'rec-3',
+		status: 'approved',
+		title: 'Add rate limiting middleware for external API calls',
+		summary: 'External API rate limit errors indicate missing client-side rate limiting. Implementing token bucket algorithm would prevent hitting provider limits.',
+		priority: 'medium',
+		category: 'api_contract',
+		confidence: 0.95,
+		source_incident_ids: ['inc-12'],
+		has_conflicts: false,
+		approved_at: '2024-01-22T11:00:00Z',
+		approved_by: 'eng-lead',
+		created_at: '2024-01-19T14:00:00Z',
+		updated_at: '2024-01-22T11:00:00Z',
+		analysis: {
+			patterns_identified: [
+				'RateLimitError spikes during batch operations',
+				'No backoff strategy for 429 responses',
+				'Concurrent requests exceed provider quotas'
+			],
+			root_cause: 'Missing client-side rate limiting for external APIs',
+			impact_assessment: 'Medium - affects notification delivery reliability',
+			affected_components: ['src/services/email.ts', 'src/utils']
+		},
+		proposed_changes: [
+			{
+				file_path: 'src/utils/rateLimit.ts',
+				change_type: 'create',
+				description: 'Token bucket rate limiter implementation',
+				rationale: 'Token bucket allows burst traffic while respecting rate limits'
+			},
+			{
+				file_path: 'src/services/email.ts',
+				change_type: 'modify',
+				description: 'Apply rate limiter to SMTP client',
+				rationale: 'Email service is primary source of rate limit violations'
+			}
+		]
+	},
+	{
+		id: 'rec-4',
+		status: 'analyzing',
+		title: 'Standardize session validation across handlers',
+		summary: 'Session-related null pointer exceptions appear in multiple handlers. A unified session validation middleware would eliminate these errors.',
+		priority: 'medium',
+		category: 'security',
+		confidence: 0.78,
+		source_incident_ids: ['inc-1', 'inc-9'],
+		has_conflicts: false,
+		created_at: '2024-01-22T08:00:00Z',
+		updated_at: '2024-01-22T08:30:00Z',
+		analysis: {
+			patterns_identified: [
+				'NullPointerException on session.getAttribute()',
+				'Inconsistent session validation across endpoints'
+			],
+			root_cause: 'Analysis in progress...',
+			impact_assessment: 'Pending impact assessment',
+			affected_components: ['src/handlers', 'src/middleware']
+		}
+	},
+	{
+		id: 'rec-5',
+		status: 'implementing',
+		title: 'Add JSON content-type validation before parsing',
+		summary: 'Multiple SyntaxError incidents from parsing non-JSON responses. Adding content-type validation would provide clear error messages instead of parse failures.',
+		priority: 'low',
+		category: 'error_pattern',
+		confidence: 0.89,
+		source_incident_ids: ['inc-8'],
+		pr_url: 'https://github.com/acme/user-service/pull/95',
+		pr_number: 95,
+		pr_state: 'open',
+		pr_branch: 'fix/json-content-validation',
+		has_conflicts: false,
+		approved_at: '2024-01-21T16:00:00Z',
+		approved_by: 'senior-dev',
+		created_at: '2024-01-21T10:00:00Z',
+		updated_at: '2024-01-22T12:00:00Z',
+		analysis: {
+			patterns_identified: [
+				'SyntaxError when upstream returns HTML error pages',
+				'502/503 responses parsed as JSON'
+			],
+			root_cause: 'Missing content-type check before JSON.parse()',
+			impact_assessment: 'Low - affects error handling UX, not core functionality',
+			affected_components: ['src/api/client.ts']
+		},
+		proposed_changes: [
+			{
+				file_path: 'src/api/client.ts',
+				change_type: 'modify',
+				description: 'Add content-type validation before parsing',
+				rationale: 'Checking content-type prevents attempting to parse non-JSON responses'
+			}
+		]
+	}
+];
+
+// Get mock recommendations
+export function getMockRecommendations(): Recommendation[] {
+	return mockRecommendations;
+}
 
 // Mock external issues for demo mode
 export function getMockExternalIssues(incidentId: string): Array<{

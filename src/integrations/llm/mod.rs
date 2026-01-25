@@ -5,9 +5,10 @@
 //! - OpenAI (GPT models)
 //! - Ollama (local models)
 //!
-//! Uses a reader/writer split to minimize costs:
+//! Uses a reader/writer/internist split to optimize for different tasks:
 //! - Reader (cheap): triage, context gathering, fingerprinting
 //! - Writer (expensive): fix generation, PR descriptions
+//! - Internist (high reasoning): pattern analysis, architectural recommendations
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -58,11 +59,12 @@ pub trait LlmProvider: Send + Sync {
     fn model_name(&self) -> &str;
 }
 
-/// Role of the LLM (reader = cheap, writer = expensive)
+/// Role of the LLM (reader = cheap, writer = expensive, internist = high reasoning)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlmRole {
     Reader,
     Writer,
+    Internist,
 }
 
 impl LlmRole {
@@ -70,6 +72,7 @@ impl LlmRole {
         match self {
             Self::Reader => "reader",
             Self::Writer => "writer",
+            Self::Internist => "internist",
         }
     }
 }
@@ -79,6 +82,7 @@ pub struct LlmManager {
     db: PgPool,
     reader: RwLock<Option<Arc<dyn LlmProvider>>>,
     writer: RwLock<Option<Arc<dyn LlmProvider>>>,
+    internist: RwLock<Option<Arc<dyn LlmProvider>>>,
     pricing: pricing::PricingConfig,
 }
 
@@ -91,6 +95,7 @@ impl LlmManager {
             db: db.clone(),
             reader: RwLock::new(None),
             writer: RwLock::new(None),
+            internist: RwLock::new(None),
             pricing,
         };
 
@@ -107,7 +112,8 @@ impl LlmManager {
         let config = sqlx::query!(
             r#"
             SELECT reader_provider, reader_model, reader_api_key, reader_base_url,
-                   writer_provider, writer_model, writer_api_key, writer_base_url
+                   writer_provider, writer_model, writer_api_key, writer_base_url,
+                   internist_provider, internist_model, internist_api_key, internist_base_url
             FROM llm_config
             ORDER BY created_at DESC
             LIMIT 1
@@ -135,11 +141,39 @@ impl LlmManager {
             )?;
             *self.writer.write().await = Some(writer);
 
-            info!(
-                reader = %c.reader_model,
-                writer = %c.writer_model,
-                "LLM providers configured"
-            );
+            // Create internist provider (optional)
+            if let (Some(provider), Some(model)) = (&c.internist_provider, &c.internist_model) {
+                match create_provider(
+                    provider,
+                    model,
+                    c.internist_api_key.as_deref(),
+                    c.internist_base_url.as_deref(),
+                ) {
+                    Ok(internist) => {
+                        *self.internist.write().await = Some(internist);
+                        info!(
+                            reader = %c.reader_model,
+                            writer = %c.writer_model,
+                            internist = %model,
+                            "LLM providers configured"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to configure internist LLM");
+                        info!(
+                            reader = %c.reader_model,
+                            writer = %c.writer_model,
+                            "LLM providers configured (internist disabled)"
+                        );
+                    }
+                }
+            } else {
+                info!(
+                    reader = %c.reader_model,
+                    writer = %c.writer_model,
+                    "LLM providers configured (internist not configured)"
+                );
+            }
         }
 
         Ok(())
@@ -165,9 +199,24 @@ impl LlmManager {
         })
     }
 
+    /// Get the internist LLM (high reasoning, for pattern analysis)
+    pub async fn internist(&self) -> Option<TrackedLlm> {
+        self.internist.read().await.as_ref().map(|p| TrackedLlm {
+            inner: p.clone(),
+            db: self.db.clone(),
+            role: LlmRole::Internist,
+            pricing: self.pricing.clone(),
+        })
+    }
+
     /// Check if LLMs are configured
     pub async fn is_configured(&self) -> bool {
         self.reader.read().await.is_some() && self.writer.read().await.is_some()
+    }
+
+    /// Check if internist LLM is configured
+    pub async fn is_internist_configured(&self) -> bool {
+        self.internist.read().await.is_some()
     }
 }
 

@@ -106,6 +106,10 @@ pub struct Incident {
     pub recurrence_count: Option<i32>,
     /// When recurrence was first detected
     pub recurrence_detected_at: Option<DateTime<Utc>>,
+    /// Whether this incident's fix modifies API contract files
+    pub has_api_contract_changes: Option<bool>,
+    /// Details about API contract changes (if any)
+    pub api_contract_change_details: Option<serde_json::Value>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -162,6 +166,10 @@ pub struct LlmConfig {
     pub writer_model: String,
     pub writer_api_key: Option<String>,
     pub writer_base_url: Option<String>,
+    pub internist_provider: Option<String>,
+    pub internist_model: Option<String>,
+    pub internist_api_key: Option<String>,
+    pub internist_base_url: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -324,6 +332,10 @@ pub struct IncidentResponse {
     pub recurrence_count: Option<i32>,
     /// When recurrence was first detected
     pub recurrence_detected_at: Option<DateTime<Utc>>,
+    /// Whether this incident's fix modifies API contract files
+    pub has_api_contract_changes: bool,
+    /// Details about API contract changes (if any)
+    pub api_contract_change_details: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -360,6 +372,8 @@ impl From<Incident> for IncidentResponse {
             verification_ends_at: i.verification_ends_at,
             recurrence_count: i.recurrence_count,
             recurrence_detected_at: i.recurrence_detected_at,
+            has_api_contract_changes: i.has_api_contract_changes.unwrap_or(false),
+            api_contract_change_details: i.api_contract_change_details,
             created_at: i.created_at.unwrap_or_else(Utc::now),
             updated_at: i.updated_at.unwrap_or_else(Utc::now),
         }
@@ -453,6 +467,212 @@ impl From<IncidentRelation> for IncidentRelationResponse {
             relation_type: r.relation_type,
             confidence: r.confidence,
             created_at: r.created_at.unwrap_or_else(Utc::now),
+        }
+    }
+}
+
+// Architectural recommendation from internist analysis
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct Recommendation {
+    pub id: Uuid,
+    pub status: String,
+    pub title: String,
+    pub summary: Option<String>,
+    pub analysis: Option<serde_json::Value>,
+    pub proposed_changes: Option<serde_json::Value>,
+    pub priority: Option<String>,
+    pub category: Option<String>,
+    pub confidence: Option<f32>,
+    pub source_incident_ids: Option<Vec<Uuid>>,
+    pub pr_url: Option<String>,
+    pub pr_number: Option<i32>,
+    pub pr_state: Option<String>,
+    pub pr_branch: Option<String>,
+    pub base_commit_sha: Option<String>,
+    pub has_conflicts: Option<bool>,
+    pub conflict_details: Option<serde_json::Value>,
+    pub analyzed_at: Option<DateTime<Utc>>,
+    pub proposed_at: Option<DateTime<Utc>>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub approved_by: Option<String>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecommendationResponse {
+    pub id: Uuid,
+    pub status: String,
+    pub title: String,
+    pub summary: Option<String>,
+    pub analysis: Option<serde_json::Value>,
+    pub proposed_changes: Option<serde_json::Value>,
+    pub priority: String,
+    pub category: Option<String>,
+    pub confidence: Option<f32>,
+    pub source_incident_ids: Vec<Uuid>,
+    pub pr_url: Option<String>,
+    pub pr_number: Option<i32>,
+    pub pr_state: Option<String>,
+    pub pr_branch: Option<String>,
+    pub base_commit_sha: Option<String>,
+    pub has_conflicts: bool,
+    pub conflict_details: Option<serde_json::Value>,
+    pub analyzed_at: Option<DateTime<Utc>>,
+    pub proposed_at: Option<DateTime<Utc>>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub approved_by: Option<String>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<Recommendation> for RecommendationResponse {
+    fn from(r: Recommendation) -> Self {
+        Self {
+            id: r.id,
+            status: r.status,
+            title: r.title,
+            summary: r.summary,
+            analysis: r.analysis,
+            proposed_changes: r.proposed_changes,
+            priority: r.priority.unwrap_or_else(|| "medium".to_string()),
+            category: r.category,
+            confidence: r.confidence,
+            source_incident_ids: r.source_incident_ids.unwrap_or_default(),
+            pr_url: r.pr_url,
+            pr_number: r.pr_number,
+            pr_state: r.pr_state,
+            pr_branch: r.pr_branch,
+            base_commit_sha: r.base_commit_sha,
+            has_conflicts: r.has_conflicts.unwrap_or(false),
+            conflict_details: r.conflict_details,
+            analyzed_at: r.analyzed_at,
+            proposed_at: r.proposed_at,
+            approved_at: r.approved_at,
+            approved_by: r.approved_by,
+            completed_at: r.completed_at,
+            created_at: r.created_at.unwrap_or_else(Utc::now),
+            updated_at: r.updated_at.unwrap_or_else(Utc::now),
+        }
+    }
+}
+
+// Discussion comment on a recommendation
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct RecommendationComment {
+    pub id: Uuid,
+    pub recommendation_id: Uuid,
+    pub author: String,
+    pub content: String,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecommendationCommentResponse {
+    pub id: Uuid,
+    pub recommendation_id: Uuid,
+    pub author: String,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<RecommendationComment> for RecommendationCommentResponse {
+    fn from(c: RecommendationComment) -> Self {
+        Self {
+            id: c.id,
+            recommendation_id: c.recommendation_id,
+            author: c.author,
+            content: c.content,
+            created_at: c.created_at.unwrap_or_else(Utc::now),
+        }
+    }
+}
+
+// Link between recommendations and incidents
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct RecommendationIncident {
+    pub id: Uuid,
+    pub recommendation_id: Uuid,
+    pub incident_id: Uuid,
+    pub relevance_score: Option<f32>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+// API contract file for breaking change detection
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct ApiContractFile {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub file_path: String,
+    pub file_type: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApiContractFileResponse {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub file_path: String,
+    pub file_type: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<ApiContractFile> for ApiContractFileResponse {
+    fn from(f: ApiContractFile) -> Self {
+        Self {
+            id: f.id,
+            project_id: f.project_id,
+            file_path: f.file_path,
+            file_type: f.file_type,
+            created_at: f.created_at.unwrap_or_else(Utc::now),
+        }
+    }
+}
+
+// Internist analysis run tracking
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct InternistAnalysisRun {
+    pub id: Uuid,
+    pub status: String,
+    pub incident_count: Option<i32>,
+    pub recommendations_created: Option<i32>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+    pub input_tokens: Option<i32>,
+    pub output_tokens: Option<i32>,
+    pub cost_usd: Option<Decimal>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InternistAnalysisRunResponse {
+    pub id: Uuid,
+    pub status: String,
+    pub incident_count: i32,
+    pub recommendations_created: i32,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+    pub input_tokens: Option<i32>,
+    pub output_tokens: Option<i32>,
+    pub cost_usd: Option<Decimal>,
+}
+
+impl From<InternistAnalysisRun> for InternistAnalysisRunResponse {
+    fn from(r: InternistAnalysisRun) -> Self {
+        Self {
+            id: r.id,
+            status: r.status,
+            incident_count: r.incident_count.unwrap_or(0),
+            recommendations_created: r.recommendations_created.unwrap_or(0),
+            started_at: r.started_at.unwrap_or_else(Utc::now),
+            completed_at: r.completed_at,
+            error: r.error,
+            input_tokens: r.input_tokens,
+            output_tokens: r.output_tokens,
+            cost_usd: r.cost_usd,
         }
     }
 }

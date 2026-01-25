@@ -15,6 +15,7 @@ pub mod metrics;
 pub mod patterns;
 pub mod projects;
 pub mod rate_limit;
+pub mod recommendations;
 pub mod router;
 pub mod settings;
 pub mod state;

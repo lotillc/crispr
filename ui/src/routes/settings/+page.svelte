@@ -23,8 +23,13 @@
 	let writerApiKey = $state('');
 	let writerBaseUrl = $state('');
 
+	let internistProvider = $state('');
+	let internistModel = $state('');
+	let internistApiKey = $state('');
+	let internistBaseUrl = $state('');
+
 	let saving = $state(false);
-	let verifying = $state<'reader' | 'writer' | null>(null);
+	let verifying = $state<'reader' | 'writer' | 'internist' | null>(null);
 	let verifyResult = $state<{ success: boolean; error?: string } | null>(null);
 	let availableModels = $state<api.LlmModel[]>([]);
 	let loadingModels = $state(false);
@@ -42,10 +47,17 @@
 		baseUrl: false,
 		model: false
 	});
+	let internistTouched = $state({
+		provider: false,
+		apiKey: false,
+		baseUrl: false,
+		model: false
+	});
 
 	// Save success state
 	let readerSaveSuccess = $state(false);
 	let writerSaveSuccess = $state(false);
+	let internistSaveSuccess = $state(false);
 
 	// Derived validation states for Reader
 	let readerProviderValidation = $derived(validateProvider(readerProvider));
@@ -86,6 +98,25 @@
 	);
 	let writerModelValidation = $derived(validateModel(writerModel));
 
+	// Derived validation states for Internist
+	let internistProviderValidation = $derived(validateProvider(internistProvider));
+	let internistApiKeyValidation = $derived(
+		internistProvider && internistProvider !== 'ollama'
+			? validateApiKey(internistApiKey, internistProvider)
+			: { valid: true }
+	);
+	let internistApiKeyRequired = $derived(
+		internistProvider &&
+		internistProvider !== 'ollama' &&
+		$llmConfig?.internist_provider !== internistProvider
+	);
+	let internistBaseUrlValidation = $derived(
+		internistProvider === 'ollama'
+			? validateUrl(internistBaseUrl, false)
+			: { valid: true }
+	);
+	let internistModelValidation = $derived(validateModel(internistModel));
+
 	// Overall form validity
 	let readerFormValid = $derived(
 		readerProviderValidation.valid &&
@@ -99,6 +130,13 @@
 		(writerProvider === 'ollama' || !writerApiKeyRequired || writerApiKeyValidation.valid) &&
 		writerBaseUrlValidation.valid &&
 		writerModelValidation.valid
+	);
+
+	let internistFormValid = $derived(
+		internistProviderValidation.valid &&
+		(internistProvider === 'ollama' || !internistApiKeyRequired || internistApiKeyValidation.valid) &&
+		internistBaseUrlValidation.valid &&
+		internistModelValidation.valid
 	);
 
 	// Helper to show error only when touched and invalid
@@ -195,6 +233,9 @@
 			writerProvider = $llmConfig.writer_provider ?? '';
 			writerModel = $llmConfig.writer_model ?? '';
 			writerBaseUrl = $llmConfig.writer_base_url ?? '';
+			internistProvider = $llmConfig.internist_provider ?? '';
+			internistModel = $llmConfig.internist_model ?? '';
+			internistBaseUrl = $llmConfig.internist_base_url ?? '';
 		}
 
 		// Load Slack channels if connected
@@ -385,13 +426,18 @@
 		}
 	}
 
-	async function verifyLlm(role: 'reader' | 'writer') {
+	async function verifyLlm(role: 'reader' | 'writer' | 'internist') {
 		verifying = role;
 		verifyResult = null;
 
-		const config = role === 'reader'
-			? { provider: readerProvider, api_key: readerApiKey || undefined, model: readerModel, base_url: readerBaseUrl || undefined }
-			: { provider: writerProvider, api_key: writerApiKey || undefined, model: writerModel, base_url: writerBaseUrl || undefined };
+		let config;
+		if (role === 'reader') {
+			config = { provider: readerProvider, api_key: readerApiKey || undefined, model: readerModel, base_url: readerBaseUrl || undefined };
+		} else if (role === 'writer') {
+			config = { provider: writerProvider, api_key: writerApiKey || undefined, model: writerModel, base_url: writerBaseUrl || undefined };
+		} else {
+			config = { provider: internistProvider, api_key: internistApiKey || undefined, model: internistModel, base_url: internistBaseUrl || undefined };
+		}
 
 		try {
 			verifyResult = await api.verifyLlm(config);
@@ -402,11 +448,16 @@
 		}
 	}
 
-	async function loadModels(role: 'reader' | 'writer') {
+	async function loadModels(role: 'reader' | 'writer' | 'internist') {
 		loadingModels = true;
-		const config = role === 'reader'
-			? { provider: readerProvider, api_key: readerApiKey || undefined, base_url: readerBaseUrl || undefined }
-			: { provider: writerProvider, api_key: writerApiKey || undefined, base_url: writerBaseUrl || undefined };
+		let config;
+		if (role === 'reader') {
+			config = { provider: readerProvider, api_key: readerApiKey || undefined, base_url: readerBaseUrl || undefined };
+		} else if (role === 'writer') {
+			config = { provider: writerProvider, api_key: writerApiKey || undefined, base_url: writerBaseUrl || undefined };
+		} else {
+			config = { provider: internistProvider, api_key: internistApiKey || undefined, base_url: internistBaseUrl || undefined };
+		}
 
 		try {
 			availableModels = await api.listLlmModels(config);
@@ -418,15 +469,21 @@
 		}
 	}
 
-	async function saveLlmConfig(role: 'reader' | 'writer') {
+	async function saveLlmConfig(role: 'reader' | 'writer' | 'internist') {
 		saving = true;
 		// Reset success states
 		if (role === 'reader') readerSaveSuccess = false;
-		else writerSaveSuccess = false;
+		else if (role === 'writer') writerSaveSuccess = false;
+		else internistSaveSuccess = false;
 
-		const config = role === 'reader'
-			? { provider: readerProvider, api_key: readerApiKey || undefined, model: readerModel, base_url: readerBaseUrl || undefined, role: 'reader' as const }
-			: { provider: writerProvider, api_key: writerApiKey || undefined, model: writerModel, base_url: writerBaseUrl || undefined, role: 'writer' as const };
+		let config;
+		if (role === 'reader') {
+			config = { provider: readerProvider, api_key: readerApiKey || undefined, model: readerModel, base_url: readerBaseUrl || undefined, role: 'reader' as const };
+		} else if (role === 'writer') {
+			config = { provider: writerProvider, api_key: writerApiKey || undefined, model: writerModel, base_url: writerBaseUrl || undefined, role: 'writer' as const };
+		} else {
+			config = { provider: internistProvider, api_key: internistApiKey || undefined, model: internistModel, base_url: internistBaseUrl || undefined, role: 'internist' as const };
+		}
 
 		try {
 			await llmConfig.update(config);
@@ -436,12 +493,17 @@
 				readerSaveSuccess = true;
 				// Clear success after 3 seconds
 				setTimeout(() => { readerSaveSuccess = false; }, 3000);
-			} else {
+			} else if (role === 'writer') {
 				writerApiKey = '';
 				writerSaveSuccess = true;
 				setTimeout(() => { writerSaveSuccess = false; }, 3000);
+			} else {
+				internistApiKey = '';
+				internistSaveSuccess = true;
+				setTimeout(() => { internistSaveSuccess = false; }, 3000);
 			}
-			toasts.success(`${role === 'reader' ? 'Reader' : 'Writer'} LLM configuration saved`);
+			const roleName = role === 'reader' ? 'Reader' : role === 'writer' ? 'Writer' : 'Internist';
+			toasts.success(`${roleName} LLM configuration saved`);
 		} catch (e) {
 			console.error('Failed to save LLM config:', e);
 			toasts.error(`Failed to save LLM config: ${(e as Error).message}`);
@@ -462,6 +524,15 @@
 
 	function touchAllWriterFields() {
 		writerTouched = {
+			provider: true,
+			apiKey: true,
+			baseUrl: true,
+			model: true
+		};
+	}
+
+	function touchAllInternistFields() {
+		internistTouched = {
 			provider: true,
 			apiKey: true,
 			baseUrl: true,
@@ -1304,6 +1375,147 @@
 					</div>
 				</div>
 			</div>
+
+			<!-- Internist LLM -->
+			<div class="llm-card">
+				<div class="llm-header">
+					<div class="llm-title">
+						<h3>Internist (Pattern Analysis)</h3>
+						<span class="llm-badge internist">High Reasoning</span>
+					</div>
+					<p>Used for analyzing patterns across incidents and recommending architectural fixes. Optional but enables the Internal Medicine feature.</p>
+				</div>
+
+				<div class="llm-form">
+					<div class="field">
+						<label class="field-label" for="internist-provider">Provider</label>
+						<select
+							id="internist-provider"
+							bind:value={internistProvider}
+							class="field-select"
+							class:field-invalid={shouldShowError(internistTouched.provider, internistProviderValidation)}
+							aria-invalid={shouldShowError(internistTouched.provider, internistProviderValidation)}
+							aria-describedby={shouldShowError(internistTouched.provider, internistProviderValidation) ? 'internist-provider-error' : undefined}
+							onblur={() => internistTouched.provider = true}
+						>
+							<option value="">Select provider...</option>
+							{#each providers as p}
+								<option value={p.value}>{p.label}</option>
+							{/each}
+						</select>
+						{#if shouldShowError(internistTouched.provider, internistProviderValidation)}
+							<span id="internist-provider-error" class="field-error" role="alert">
+								{internistProviderValidation.error}
+							</span>
+						{/if}
+					</div>
+
+					{#if internistProvider}
+						{#if internistProvider === 'ollama'}
+							<div class="field">
+								<label class="field-label" for="internist-base-url">Base URL</label>
+								<input
+									id="internist-base-url"
+									type="url"
+									bind:value={internistBaseUrl}
+									placeholder="http://localhost:11434"
+									class="field-input"
+									class:field-invalid={shouldShowError(internistTouched.baseUrl, internistBaseUrlValidation)}
+									aria-invalid={shouldShowError(internistTouched.baseUrl, internistBaseUrlValidation)}
+									aria-describedby={shouldShowError(internistTouched.baseUrl, internistBaseUrlValidation) ? 'internist-url-error' : undefined}
+									onblur={() => internistTouched.baseUrl = true}
+								/>
+								{#if shouldShowError(internistTouched.baseUrl, internistBaseUrlValidation)}
+									<span id="internist-url-error" class="field-error" role="alert">
+										{internistBaseUrlValidation.error}
+									</span>
+								{/if}
+							</div>
+						{:else}
+							<div class="field">
+								<label class="field-label" for="internist-api-key">
+									API Key
+									{#if $llmConfig?.internist_provider === internistProvider}
+										<span class="key-stored">(stored)</span>
+									{/if}
+								</label>
+								<input
+									id="internist-api-key"
+									type="password"
+									bind:value={internistApiKey}
+									placeholder={$llmConfig?.internist_provider === internistProvider ? '••••••••' : 'Enter API key'}
+									class="field-input"
+									class:field-invalid={shouldShowError(internistTouched.apiKey, internistApiKeyValidation) && internistApiKeyRequired}
+									aria-invalid={shouldShowError(internistTouched.apiKey, internistApiKeyValidation) && internistApiKeyRequired}
+									aria-describedby={shouldShowError(internistTouched.apiKey, internistApiKeyValidation) && internistApiKeyRequired ? 'internist-key-error' : undefined}
+									onblur={() => internistTouched.apiKey = true}
+								/>
+								{#if shouldShowError(internistTouched.apiKey, internistApiKeyValidation) && internistApiKeyRequired}
+									<span id="internist-key-error" class="field-error" role="alert">
+										{internistApiKeyValidation.error}
+									</span>
+								{/if}
+							</div>
+						{/if}
+
+						<div class="field">
+							<label class="field-label" for="internist-model">Model</label>
+							<div class="model-input">
+								<input
+									id="internist-model"
+									type="text"
+									bind:value={internistModel}
+									placeholder="e.g., claude-3-5-sonnet-20241022"
+									class="field-input"
+									class:field-invalid={shouldShowError(internistTouched.model, internistModelValidation)}
+									aria-invalid={shouldShowError(internistTouched.model, internistModelValidation)}
+									aria-describedby={shouldShowError(internistTouched.model, internistModelValidation) ? 'internist-model-error' : undefined}
+									onblur={() => internistTouched.model = true}
+								/>
+								<button
+									class="btn btn-ghost"
+									onclick={() => loadModels('internist')}
+									disabled={loadingModels}
+									aria-label="Load available models for internist LLM"
+								>
+									{loadingModels ? 'Loading...' : 'List Models'}
+								</button>
+							</div>
+							{#if shouldShowError(internistTouched.model, internistModelValidation)}
+								<span id="internist-model-error" class="field-error" role="alert">
+									{internistModelValidation.error}
+								</span>
+							{/if}
+						</div>
+					{/if}
+
+					{#if internistSaveSuccess}
+						<div class="save-success" role="status">
+							Configuration saved successfully!
+						</div>
+					{/if}
+
+					<div class="llm-actions">
+						<button
+							class="btn btn-secondary"
+							onclick={() => verifyLlm('internist')}
+							disabled={!internistProvider || verifying === 'internist'}
+						>
+							{verifying === 'internist' ? 'Verifying...' : 'Verify'}
+						</button>
+						<button
+							class="btn btn-primary"
+							onclick={() => {
+								touchAllInternistFields();
+								if (internistFormValid) saveLlmConfig('internist');
+							}}
+							disabled={!internistFormValid || saving}
+						>
+							{saving ? 'Saving...' : 'Save Internist'}
+						</button>
+					</div>
+				</div>
+			</div>
 		</div>
 
 		<!-- Available Models -->
@@ -1318,6 +1530,7 @@
 								// Set model based on which provider matches
 								if (readerProvider && model.id) readerModel = model.id;
 								if (writerProvider && model.id) writerModel = model.id;
+								if (internistProvider && model.id) internistModel = model.id;
 							}}
 						>
 							{model.name || model.id}
@@ -1565,6 +1778,11 @@
 	.llm-badge.writer {
 		background: var(--stable-soft);
 		color: #6D28D9;
+	}
+
+	.llm-badge.internist {
+		background: var(--alert-soft);
+		color: #B45309;
 	}
 
 	.llm-header p {

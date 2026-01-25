@@ -38,7 +38,9 @@
 
 	// Helper to get full path with base
 	function getNavPath(path: string): string {
-		return base + path;
+		const fullPath = base + path;
+		// Ensure we always have at least '/' for the root path
+		return fullPath || '/';
 	}
 
 	// Helper to check if a nav item is active
@@ -78,7 +80,7 @@
 
 	<!-- Top Bar -->
 	<header class="top-bar">
-		<div class="logo">
+		<a href={getNavPath('')} class="logo" aria-label="CRISPR Surgery Center - Go to Surgery Board">
 			<svg class="logo-icon" viewBox="0 0 32 32" fill="none" aria-hidden="true">
 				<rect x="2" y="8" width="28" height="16" rx="3" stroke="currentColor" stroke-width="2"/>
 				<path d="M8 14h16M8 18h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -86,7 +88,7 @@
 			</svg>
 			<span class="logo-text">CRISPR</span>
 			<span class="logo-subtitle">Surgery Center</span>
-		</div>
+		</a>
 
 		<!-- Mobile Menu Button -->
 		<button
@@ -231,6 +233,13 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
+		text-decoration: none;
+		cursor: pointer;
+		transition: opacity var(--transition-fast);
+	}
+
+	.logo:hover {
+		opacity: 0.8;
 	}
 
 	.logo-icon {

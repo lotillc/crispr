@@ -50,6 +50,7 @@ pub async fn list(
                        verified_at, pr_merged_at, verification_duration_hours,
                        verification_started_at, verification_ends_at,
                        recurrence_count, recurrence_detected_at,
+                       has_api_contract_changes, api_contract_change_details,
                        created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1 AND state = $2
@@ -87,6 +88,7 @@ pub async fn list(
                        verified_at, pr_merged_at, verification_duration_hours,
                        verification_started_at, verification_ends_at,
                        recurrence_count, recurrence_detected_at,
+                       has_api_contract_changes, api_contract_change_details,
                        created_at, updated_at
                 FROM incidents
                 WHERE project_id = $1
@@ -122,6 +124,7 @@ pub async fn list(
                        verified_at, pr_merged_at, verification_duration_hours,
                        verification_started_at, verification_ends_at,
                        recurrence_count, recurrence_detected_at,
+                       has_api_contract_changes, api_contract_change_details,
                        created_at, updated_at
                 FROM incidents
                 WHERE state = $1
@@ -157,6 +160,7 @@ pub async fn list(
                        verified_at, pr_merged_at, verification_duration_hours,
                        verification_started_at, verification_ends_at,
                        recurrence_count, recurrence_detected_at,
+                       has_api_contract_changes, api_contract_change_details,
                        created_at, updated_at
                 FROM incidents
                 ORDER BY last_seen DESC
@@ -222,6 +226,7 @@ pub async fn get(
                verified_at, pr_merged_at, verification_duration_hours,
                verification_started_at, verification_ends_at,
                recurrence_count, recurrence_detected_at,
+               has_api_contract_changes, api_contract_change_details,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -316,6 +321,7 @@ pub async fn retry(
                verified_at, pr_merged_at, verification_duration_hours,
                verification_started_at, verification_ends_at,
                recurrence_count, recurrence_detected_at,
+               has_api_contract_changes, api_contract_change_details,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -363,6 +369,7 @@ pub async fn retry(
                   verified_at, pr_merged_at, verification_duration_hours,
                   verification_started_at, verification_ends_at,
                   recurrence_count, recurrence_detected_at,
+                  has_api_contract_changes, api_contract_change_details,
                   created_at, updated_at
         "#,
         id,
@@ -403,6 +410,7 @@ pub async fn ignore(
                verified_at, pr_merged_at, verification_duration_hours,
                verification_started_at, verification_ends_at,
                recurrence_count, recurrence_detected_at,
+               has_api_contract_changes, api_contract_change_details,
                created_at, updated_at
         FROM incidents WHERE id = $1
         "#,
@@ -427,6 +435,7 @@ pub async fn ignore(
                   verified_at, pr_merged_at, verification_duration_hours,
                   verification_started_at, verification_ends_at,
                   recurrence_count, recurrence_detected_at,
+                  has_api_contract_changes, api_contract_change_details,
                   created_at, updated_at
         "#,
         id
