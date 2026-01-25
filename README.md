@@ -106,6 +106,7 @@ This ensures each fix is based on the current state of the codebase and avoids c
   - [Webhook Ingestion](#webhook-ingestion)
 - [Generated Tests](#generated-tests)
 - [Error Pattern Matching](#error-pattern-matching)
+- [Internal Medicine](#internal-medicine)
 - [API Reference](#api-reference)
   - [Ingest Endpoints](#ingest-endpoints)
   - [Projects API](#projects-api)
@@ -142,7 +143,7 @@ CRISPR monitors your production logs for errors, automatically triages them usin
 ## Features
 
 - **Multi-LLM Support**: Anthropic Claude, OpenAI GPT, and Ollama (local models)
-- **Reader/Writer Split**: Use cheap models for triage, expensive models for fixes
+- **Reader/Writer/Internist Split**: Use cheap models for triage, expensive models for fixes, high-reasoning models for pattern analysis
 - **Generated Tests**: Automatically generates unit tests alongside fixes to verify correctness
 - **Error Pattern Matching**: 23 built-in patterns for auto-triage without LLM calls (saves costs)
 - **Usage Tracking**: Track token usage and costs per provider and purpose
@@ -155,6 +156,7 @@ CRISPR monitors your production logs for errors, automatically triages them usin
 - **CRISPR.md Context**: Maintains a context file in each repo with fix history and service info
 - **Local Repo Clones**: Keeps repos cloned locally for faster access and offline context
 - **Distributed Workers**: Multiple workers can run in parallel with claim-based coordination
+- **Internal Medicine**: Pattern analysis across incidents to identify architectural issues and propose systemic fixes
 
 ---
 
@@ -357,10 +359,11 @@ CRISPR supports two GitHub authentication modes:
 
 ### LLM Providers
 
-CRISPR uses a **reader/writer split** to optimize costs:
+CRISPR uses a **reader/writer/internist split** to optimize costs and capabilities:
 
 - **Reader** (triage): Cheap, fast model for determining if errors are fixable
 - **Writer** (fix generation): Capable model for generating code fixes
+- **Internist** (pattern analysis): High-reasoning model for cross-incident pattern analysis and architectural recommendations
 
 #### Anthropic (Recommended)
 
@@ -372,6 +375,7 @@ ANTHROPIC_API_KEY=sk-ant-your-key
 |------|-------------------|
 | Reader | `claude-3-haiku-20240307` |
 | Writer | `claude-sonnet-4-20250514` |
+| Internist | `claude-sonnet-4-20250514` |
 
 #### OpenAI
 
@@ -383,6 +387,7 @@ OPENAI_API_KEY=sk-your-key
 |------|-------------------|
 | Reader | `gpt-4o-mini` |
 | Writer | `gpt-4o` |
+| Internist | `gpt-4o` |
 
 #### Ollama (Local)
 
@@ -518,6 +523,49 @@ curl -X POST http://localhost:8081/api/v1/patterns \
 
 ---
 
+## Internal Medicine
+
+The Internal Medicine feature provides high-level pattern analysis across incidents, identifying architectural issues and proposing systemic fixes rather than ad-hoc patches.
+
+### How It Works
+
+1. **Automatic Triggering**: After each incident is verified (fix confirmed working), the Internist LLM analyzes recent incidents for patterns
+2. **Cross-Service Analysis**: The Internist can see incidents across all projects, detecting when multiple services fail together due to shared infrastructure
+3. **Recommendations**: Patterns are turned into actionable recommendations with root cause analysis and proposed changes
+4. **Interactive Refinement**: Chat with the Internist to refine recommendations before approval
+5. **Conversion to Tickets**: Approved recommendations become detailed triage tickets for the Writer LLM to fix
+
+### Recommendation Categories
+
+| Category | Description | Auto-Fixable |
+|----------|-------------|--------------|
+| `api_contract` | Breaking changes to APIs, inconsistent interfaces | Yes |
+| `architecture` | Structural problems, tight coupling, missing abstractions | Yes |
+| `error_pattern` | Recurring error types that need systematic handling | Yes |
+| `performance` | Systemic performance issues | Yes |
+| `security` | Security patterns or vulnerabilities | Yes |
+| `infrastructure` | Database sizing, resource limits, scaling issues | **No** (human required) |
+
+### Human-Only Recommendations
+
+Some issues cannot be fixed by code changes alone. When the Internist identifies infrastructure problems (e.g., "increase database connection pool size"), it creates a recommendation marked as **requires human intervention**. These appear with a special indicator in the UI and create tickets for humans to address.
+
+### UI Integration
+
+The **Internal Medicine** section appears on the Surgery Board dashboard, showing:
+- Active recommendations with status (proposed, approved, implementing)
+- Conflict warnings for long-lived proposals
+- Pattern confidence scores
+- Related incident counts
+
+Click a recommendation to:
+- View full analysis and proposed changes
+- Chat with the Internist to refine the recommendation
+- Approve and convert to a fix ticket
+- Reject with a reason
+
+---
+
 ## API Reference
 
 > 📚 **Full API documentation**: See [docs/API.md](docs/API.md) for comprehensive endpoint documentation with request/response schemas and examples.
@@ -586,6 +634,20 @@ Receive logs via OpenTelemetry OTLP protocol.
 | POST | `/api/v1/patterns/test` | Test a regex against sample text |
 | GET | `/api/v1/incidents/:id/pattern-matches` | Get pattern matches for incident |
 
+### Recommendations API (Internal Medicine)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/recommendations` | List all recommendations |
+| GET | `/api/v1/recommendations/:id` | Get recommendation details |
+| POST | `/api/v1/recommendations/:id/approve` | Approve recommendation |
+| POST | `/api/v1/recommendations/:id/reject` | Reject with reason |
+| POST | `/api/v1/recommendations/:id/chat` | Send message to Internist |
+| GET | `/api/v1/recommendations/:id/chat` | Get chat history |
+| POST | `/api/v1/recommendations/:id/apply-suggestion` | Apply Internist's suggested changes |
+| POST | `/api/v1/recommendations/:id/convert-to-incident` | Convert to triage ticket |
+| POST | `/api/v1/internist/analyze` | Trigger manual analysis |
+
 ### Settings API
 
 | Method | Endpoint | Description |
@@ -594,7 +656,7 @@ Receive logs via OpenTelemetry OTLP protocol.
 | PUT | `/api/v1/settings/llm` | Update LLM configuration |
 | POST | `/api/v1/settings/llm/verify` | Verify API key works |
 | POST | `/api/v1/settings/llm/models` | List available models |
-| GET | `/api/v1/usage/summary` | Get usage summary |
+| GET | `/api/v1/usage/summary` | Get usage summary (includes Internist costs) |
 | GET | `/api/v1/usage/details` | Get detailed usage |
 
 ### Auth API
@@ -654,12 +716,29 @@ Detailed view of PRs awaiting approval. Each incident shows:
 
 Includes confidence percentage, link to GitHub PR, and quick approve/reject actions.
 
+### Internal Medicine Section
+
+Below the main dashboard, the **Internal Medicine** section shows architectural recommendations:
+
+| Element | Description |
+|---------|-------------|
+| **Recommendation Cards** | Each card shows title, category, priority, and related incident count |
+| **Status Badges** | Proposed, Approved, Implementing, Completed, Rejected |
+| **Conflict Warning** | Orange indicator when a long-lived proposal has merge conflicts |
+| **Human Required** | Special badge for infrastructure changes that can't be auto-fixed |
+
+Click a recommendation to open the detail page with:
+- Full root cause analysis
+- Proposed code changes
+- Interactive chat with the Internist LLM
+- Approve/Reject actions
+
 ### Other Pages
 
 | Page | Description |
 |------|-------------|
-| **Administration** | Cost breakdown by provider and purpose, usage charts over time |
-| **Settings** | LLM provider configuration (Anthropic/OpenAI/Ollama), GitHub and Slack connection status |
+| **Administration** | Cost breakdown by provider and purpose (Reader, Writer, Internist), usage charts over time |
+| **Settings** | LLM provider configuration (Anthropic/OpenAI/Ollama) for all three tiers, GitHub and Slack connection status |
 
 ---
 
@@ -825,6 +904,7 @@ crispr/
 │   │   ├── patterns.rs   # Error pattern API
 │   │   ├── projects.rs   # Project CRUD
 │   │   ├── incidents.rs  # Incident management
+│   │   ├── recommendations.rs  # Internal Medicine API
 │   │   └── settings.rs   # LLM & usage
 │   ├── integrations/     # External services
 │   │   ├── github.rs     # GitHub API client
@@ -839,7 +919,10 @@ crispr/
 │   │   ├── fix.rs        # Fix + test generation
 │   │   ├── pr.rs
 │   │   ├── repo.rs       # Local repo management
-│   │   └── crispr_md.rs  # CRISPR.md context file
+│   │   ├── crispr_md.rs  # CRISPR.md context file
+│   │   ├── internist.rs  # Pattern analysis (Internal Medicine)
+│   │   ├── api_contracts.rs  # API breaking change detection
+│   │   └── merge.rs      # Intelligent merge for long-lived proposals
 │   └── store/            # Data storage
 │       ├── postgres.rs
 │       ├── object.rs
